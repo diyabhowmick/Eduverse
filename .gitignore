@@ -1,0 +1,40 @@
+# Never commit these. node_modules alone is tens of thousands of files and
+# will make a push hang or be rejected for size.
+
+# --- installed packages ---
+node_modules/
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- build output (Railway rebuilds it from source) ---
+frontend/dist/
+build/
+
+# --- databases and uploaded books (local data, not code) ---
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+data/storage/
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- editor and OS noise ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- logs ---
+*.log
+npm-debug.log*

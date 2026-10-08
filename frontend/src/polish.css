@@ -1,0 +1,298 @@
+/* ============================================================
+   Polish — loaded after styles.css, overrides nothing structural.
+   Every selector here already exists; this refines how it looks.
+   ============================================================ */
+
+/* ---- 1 · type ----------------------------------------------
+   Arial is what made it read like an internal tool. Inter is
+   built for interfaces; the numeric settings stop figures in a
+   table from jittering as they change. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+body{
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:14.5px; line-height:1.55;
+  font-feature-settings:'cv02','cv03','cv04','ss01';
+  letter-spacing:-.006em;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
+
+/* ---- 2 · depth ---------------------------------------------
+   Borders alone look flat. A hairline plus a soft shadow is what
+   separates a card from a box. */
+:root{
+  --shadow:0 1px 2px rgba(16,18,24,.04), 0 2px 8px rgba(16,18,24,.04);
+  --shadow-lift:0 2px 4px rgba(16,18,24,.05), 0 12px 28px rgba(16,18,24,.08);
+  --ring:0 0 0 3px rgba(224,33,47,.13);
+  --r:12px; --r-sm:9px;
+  --ease:cubic-bezier(.2,.7,.3,1);
+}
+
+/* ---- 3 · the sidebar ---------------------------------------- */
+.rail{
+  background:linear-gradient(180deg,#15171C 0%,#101217 100%);
+  border-right:none; color:#C7CCD6;
+}
+.rail-top{padding:20px 16px 16px}
+.brand{color:#fff; font-weight:750; letter-spacing:-.025em}
+.brand small{color:#767D8C}
+.mark{
+  box-shadow:0 2px 10px rgba(224,33,47,.4);
+  background:linear-gradient(145deg,#F03543,var(--red));
+}
+.nav{padding:8px 10px; gap:1px}
+.nav a{
+  color:#A8AEBB; border-radius:var(--r-sm); padding:9px 11px;
+  font-weight:500; transition:background .14s var(--ease), color .14s var(--ease);
+}
+.nav a svg{opacity:.72; transition:opacity .14s}
+.nav a:hover{background:rgba(255,255,255,.05); color:#fff}
+.nav a:hover svg{opacity:1}
+.nav a.active{
+  background:rgba(255,255,255,.08); color:#fff; font-weight:650;
+  box-shadow:inset 2px 0 0 var(--red);
+}
+.nav a.active svg{opacity:1; color:var(--red)}
+.nav .count{
+  background:var(--red); box-shadow:0 1px 4px rgba(224,33,47,.4);
+  font-size:10.5px; padding:2px 7px;
+}
+.rail-foot{border-top:1px solid rgba(255,255,255,.07); padding:14px 16px}
+.company b{color:#fff}
+.company span,.company .tagline{color:#6E7584}
+.rail .icon-btn{
+  background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.09); color:#A8AEBB;
+}
+.rail .icon-btn:hover{background:rgba(255,255,255,.1); color:#fff; border-color:rgba(255,255,255,.16)}
+
+/* ---- 4 · the top bar and page head -------------------------- */
+.topbar{
+  height:60px; padding:0 30px;
+  background:rgba(255,255,255,.82); backdrop-filter:saturate(180%) blur(12px);
+}
+[data-theme=dark] .topbar{background:rgba(22,24,29,.82)}
+.topbar .crumb{font-size:13.5px; font-weight:500}
+.avatar{
+  background:linear-gradient(145deg,#2A2E37,#15171C); color:#fff;
+  font-size:11.5px; font-weight:700; box-shadow:var(--shadow);
+}
+.page{padding:30px 30px 72px}
+.page-head{margin-bottom:24px}
+.page-head h1{
+  font-size:27px; font-weight:730; letter-spacing:-.032em; line-height:1.18;
+}
+.page-head p{font-size:14.5px; color:var(--ink-3); max-width:68ch; line-height:1.6}
+
+/* ---- 5 · buttons -------------------------------------------- */
+.btn{
+  border-radius:var(--r-sm); padding:9px 15px; font-weight:600; font-size:13.5px;
+  transition:transform .1s var(--ease), box-shadow .16s var(--ease),
+             border-color .16s, background .16s;
+  box-shadow:0 1px 2px rgba(16,18,24,.04);
+}
+.btn:hover{border-color:var(--line-2); box-shadow:var(--shadow)}
+.btn:active{transform:translateY(.5px)}
+.btn.primary{
+  background:linear-gradient(145deg,#EC2B38,var(--red));
+  box-shadow:0 1px 2px rgba(224,33,47,.2), 0 4px 14px rgba(224,33,47,.24);
+}
+.btn.primary:hover{box-shadow:0 2px 4px rgba(224,33,47,.24), 0 8px 22px rgba(224,33,47,.3)}
+.btn.ghost{box-shadow:none}
+.btn.sm{padding:6px 11px; font-size:12.5px}
+
+/* ---- 6 · inputs --------------------------------------------- */
+.input,select.input,textarea.input{
+  border-radius:var(--r-sm); padding:9px 12px; font-size:14px;
+  transition:border-color .14s, box-shadow .14s; background:var(--bg);
+}
+.input:hover{border-color:var(--line-2)}
+.input:focus{box-shadow:var(--ring)}
+.field label{font-size:12.5px; font-weight:600; letter-spacing:.005em}
+.seg{border-radius:var(--r-sm); overflow:hidden; box-shadow:0 1px 2px rgba(16,18,24,.04)}
+.seg button{font-size:13px; font-weight:550; padding:7px 13px; transition:background .14s}
+.seg button:hover{background:var(--panel)}
+.seg button.on{background:var(--ink); color:var(--bg); font-weight:650}
+
+/* ---- 7 · cards and tables ----------------------------------- */
+.card{
+  border-radius:var(--r); box-shadow:var(--shadow);
+  transition:box-shadow .2s var(--ease);
+}
+.card-h{padding:15px 20px}
+.card-h h3{font-size:15px; font-weight:680; letter-spacing:-.012em}
+.card-b{padding:18px 20px}
+.t th{
+  font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+  padding:11px 16px; background:var(--panel); color:var(--ink-3);
+}
+.t td{padding:13px 16px; border-bottom-color:rgba(0,0,0,.045)}
+[data-theme=dark] .t td{border-bottom-color:rgba(255,255,255,.06)}
+.t tbody tr{transition:background .12s}
+.t .num{font-variant-numeric:tabular-nums; font-feature-settings:'tnum'}
+.t td b{font-weight:620}
+
+/* ---- 8 · tags ----------------------------------------------- */
+.tag{
+  font-size:11.5px; font-weight:650; padding:3px 10px; letter-spacing:.004em;
+  border:1px solid transparent;
+}
+.tag.ok{border-color:rgba(31,122,77,.18)}
+.tag.warn{border-color:rgba(154,91,0,.18)}
+.tag.bad{border-color:rgba(224,33,47,.18)}
+.tag.info{border-color:rgba(30,79,154,.18)}
+
+/* ---- 9 · metrics —  the first thing anyone looks at ---------- */
+.metrics{gap:14px}
+.metric{
+  border-radius:var(--r); padding:18px 20px; box-shadow:var(--shadow);
+  position:relative; overflow:hidden;
+  transition:box-shadow .2s var(--ease), transform .2s var(--ease);
+}
+.metric:before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:var(--red); opacity:0; transition:opacity .2s;
+}
+.metric:hover{box-shadow:var(--shadow-lift); transform:translateY(-1px)}
+.metric:hover:before{opacity:1}
+.metric .v{
+  font-size:29px; font-weight:740; letter-spacing:-.04em; line-height:1.05;
+  font-variant-numeric:tabular-nums;
+}
+.metric .l{font-size:12.5px; color:var(--ink-3); margin-top:6px; line-height:1.4}
+
+/* ---- 10 · progress bars ------------------------------------- */
+.bar-track{height:7px; border-radius:7px}
+.bar-track i{
+  background:linear-gradient(90deg,#F03543,var(--red)); border-radius:7px;
+  transition:width .5s var(--ease);
+}
+
+/* ---- 11 · modals -------------------------------------------- */
+.overlay{background:rgba(14,16,20,.5); backdrop-filter:blur(3px)}
+.modal{
+  border-radius:16px; box-shadow:0 20px 70px rgba(10,12,16,.26);
+  animation:rise .22s var(--ease);
+}
+@keyframes rise{from{opacity:0; transform:translateY(10px) scale(.985)}}
+.modal-h{padding:18px 22px 14px}
+.modal-h h3{font-size:17px; font-weight:700; letter-spacing:-.02em}
+.modal-b{padding:4px 22px 18px}
+.modal-f{padding:14px 22px 18px; gap:9px}
+
+/* ---- 12 · the sign-in page ---------------------------------- */
+.login{min-height:100%}
+.login-art{
+  background:linear-gradient(155deg,#191C22 0%,#0E1014 58%,#15171C 100%);
+  position:relative; overflow:hidden;
+}
+.login-art:after{
+  content:""; position:absolute; right:-18%; top:-14%; width:620px; height:620px;
+  border-radius:50%; pointer-events:none;
+  background:radial-gradient(circle, rgba(224,33,47,.22), transparent 64%);
+}
+.login-art .headline{
+  font-size:40px; font-weight:760; letter-spacing:-.038em; line-height:1.1; color:#fff;
+}
+.login-art .headline em{color:#FF6670; font-style:normal}
+.login-art .sub{color:#9AA1AF; font-size:15.5px; line-height:1.68; max-width:44ch}
+.login-art .chips span{
+  border:1px solid rgba(255,255,255,.14); color:#C7CCD6; border-radius:30px;
+  padding:7px 15px; font-size:12.5px; font-weight:550;
+  backdrop-filter:blur(8px); background:rgba(255,255,255,.03);
+}
+.login-form{background:var(--panel)}
+.login-form h1,.login-form h2{font-size:25px; font-weight:730; letter-spacing:-.03em}
+.login-logo{margin-bottom:26px}
+.login .btn.primary{width:100%; justify-content:center; padding:12px; font-size:15px}
+.login .hint{
+  background:var(--info-soft); border:1px solid rgba(30,79,154,.14);
+  border-radius:var(--r-sm); padding:12px 14px; font-size:12.5px;
+  color:var(--info); line-height:1.55;
+}
+
+/* ---- 12b · a note that is a caution, not a fact -------------- */
+.note.warn{
+  background:var(--warn-soft); border:1px solid rgba(154,91,0,.2); color:var(--warn);
+}
+.note.warn b{color:var(--warn)}
+
+/* ---- 13 · charts and empties -------------------------------- */
+.chart .gridline{stroke:var(--line); stroke-dasharray:3 4; opacity:.75}
+.chart .axis{font-size:10.5px; fill:var(--ink-3); font-weight:500}
+.empty{
+  padding:48px 24px; font-size:14px;
+  border:1px dashed var(--line-2); border-radius:var(--r); background:var(--panel);
+}
+.card .empty{border:0; background:none}
+
+/* ---- 14 · scrollbars ---------------------------------------- */
+*::-webkit-scrollbar{width:11px; height:11px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{
+  background:rgba(125,131,143,.3); border-radius:8px;
+  border:3px solid transparent; background-clip:content-box;
+}
+*::-webkit-scrollbar-thumb:hover{background:rgba(125,131,143,.5); background-clip:content-box}
+.rail::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14); background-clip:content-box}
+
+/* ---- 15 · toasts and small type ----------------------------- */
+.toasts{gap:9px}
+.toasts>div{
+  border-radius:var(--r-sm); box-shadow:0 8px 28px rgba(10,12,16,.2);
+  font-size:13.5px; font-weight:550; animation:rise .2s var(--ease);
+}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace; font-size:12.5px}
+.muted{color:var(--ink-3)}
+.sub,.tagline,.hint{font-size:12.5px}
+
+/* ---- 16 · the reader —  made for reading, not scanning -------
+   A serif at a generous measure. Someone reads a chapter here;
+   everywhere else in the product they scan. */
+.spage p,.spage li{
+  font-family:'Source Serif 4',Georgia,serif;
+  font-size:17.5px; line-height:1.8; letter-spacing:-.002em;
+}
+.spage h2,.spage h3{letter-spacing:-.022em; font-weight:650}
+.spage .kw{
+  border-radius:3px; padding:0 3px; font-weight:600;
+  transition:background .14s var(--ease);
+}
+.spage .kw:hover{background:var(--red-soft)}
+.srail,.sside{background:var(--panel)}
+.stopics a.on,.stopics .on{font-weight:650}
+
+@media (max-width:900px){
+  .page{padding:22px 18px 60px}
+  .topbar{padding:0 18px}
+  .grid2,.grid3{grid-template-columns:1fr}
+  .page-head h1{font-size:23px}
+  .login-art{display:none}
+}
+
+/* ---- 17 · the student's own question -------------------------
+   Sits at the foot of the reader's side panel, always visible. The
+   count is shown because being told "4 left" is useful and being
+   told nothing until it stops is what feels broken. */
+.askbox{
+  border-top:1px solid var(--line); margin-top:14px; padding:14px 0 4px;
+}
+.askbox .h{
+  display:flex; align-items:center; gap:9px; font-size:12.5px; font-weight:650;
+  color:var(--ink-3); margin-bottom:10px;
+}
+.askbox .h .tag{margin-left:auto}
+.askrow{display:flex; gap:7px}
+.askrow input{
+  flex:1; min-width:0; height:36px; border:1px solid var(--line-2); border-radius:var(--r-sm);
+  padding:0 11px; font-family:inherit; font-size:13.5px; background:var(--bg); color:var(--ink);
+}
+.askrow input:focus{outline:none; border-color:var(--red); box-shadow:var(--ring)}
+.asked{
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--r-sm);
+  padding:11px 13px; margin-bottom:9px; font-size:13px; line-height:1.6;
+}
+.asked b{display:block; font-size:12.5px; color:var(--ink); margin-bottom:5px}
+.asked div{color:var(--ink-2)}
+.asked .free{
+  display:block; margin-top:7px; font-size:11px; color:var(--ok);
+}
