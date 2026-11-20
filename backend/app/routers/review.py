@@ -38,6 +38,25 @@ def editable(b: Book):
         raise HTTPException(409, "Only books in review can be changed")
 
 
+def page_editable(db, b: Book, page: int):
+    """Looser than editable(), and only for one page's own review state.
+
+    A live book with one bad page used to leave only one move: pull the whole
+    book back, which takes it away from every student over a single page. A
+    page that somebody has flagged can be fixed and re-approved while the book
+    stays live, so a typo on page 30 no longer costs the class its textbook.
+
+    Everything else - editing blocks, publishing, sending back - still needs
+    the whole book to be in review.
+    """
+    if b.status == "in_review":
+        return
+    r = db.get(ReviewPage, (b.id, page))
+    if b.status == "live" and r and r.category:
+        return
+    raise HTTPException(409, "Only books in review, or a flagged page of a live book, can be changed")
+
+
 def reviewer_name(db, uid):
     from ..models import User
     u = db.get(User, uid) if uid else None
@@ -86,12 +105,14 @@ def book(bid: int, db: Session = Depends(get_db), me=Depends(reviewer)):
         if (f.get("m2") or {}).get("status") == "generated" and f["m2"].get("choice") == "pending":
             choose[f.get("page")] = choose.get(f.get("page"), 0) + 1
     pages = [{"page": r.page, "status": r.status, "comment": r.comment, "reviewer": r.reviewer, "flags": len(flags.get(r.page, [])),
+              "category": r.category, "rerun": r.rerun, "fixed_by": r.fixed_by,
               "chapter": chap_of.get(r.page), "choose": choose.get(r.page, 0)} for r in db.query(ReviewPage).filter(ReviewPage.book_id == bid).order_by(ReviewPage.page)]
     return {"id": b.id, "title": b.title, "subject": b.subject, "board": b.board, "grade": b.grade, "status": b.status,
             "detected": data["book"], "has_original_pdf": bool(b.original_key.lower().endswith(".pdf")) if b.original_key else False,
             "chapters": [{"number": c["number"], "title": c["title"], "partial": c.get("partial", False), "keywords": len(c["keywords"])} for c in data["chapters"]],
             "toc": data["toc"], "pages": pages, "progress": progress(db, bid), "report": {k: rep.get(k) for k in ("blocks", "figures", "sections", "ledger")},
-            "flags": rep.get("needs_review", []), "m2": C.load_extra(b, "m2_report.json"), "to_choose": sum(choose.values())}
+            "flags": rep.get("needs_review", []), "m2": C.load_extra(b, "m2_report.json"), "to_choose": sum(choose.values()),
+            "flag_options": flag_options()}
 
 
 @router.get("/books/{bid}/pages/{page}")
@@ -105,7 +126,9 @@ def page(bid: int, page: int, db: Session = Depends(get_db), me=Depends(reviewer
                                                    "flow": flow.get(str(page), [])},
             "flags": [f for f in rep.get("needs_review", []) if f["page"] == page],
             "removed": [l for l in C.ledger(b) if l.get("page") == page and "removed" in l.get("what", "")],
-            "status": r.status if r else "pending", "comment": r.comment if r else ""}
+            "status": r.status if r else "pending", "comment": r.comment if r else "",
+            "category": r.category if r else "", "rerun": r.rerun if r else "",
+            "fixed_by": r.fixed_by if r else ""}
 
 
 @router.get("/books/{bid}/pages/{page}/original.png")
@@ -277,13 +300,45 @@ def regenerate_figure(bid: int, block_id: str, body: Regenerate, db: Session = D
     return {"id": block_id, "m2": rec, "desc": blk.get("desc")}
 
 
+# What goes wrong on a page, and what would put it right.
+#
+# A category is the point of this: "Figure 1.2 is cut off" is one reviewer's
+# sentence, but "figure" counted 40 times across the catalogue is a fact about
+# the pipeline. `fix` is the honest next step rather than a human having to
+# triage every flag — a cut-off figure is M2's job, garbled text is M1's.
+#
+# Kept short deliberately. Twenty categories and people pick "other".
+FLAGS = [
+    ("text",    "Text is wrong or missing",            "m1"),
+    ("figure",  "Figure is wrong, cut off or missing", "m2"),
+    ("maths",   "Formula or equation is wrong",        "m1"),
+    ("table",   "Table is wrong",                      "m1"),
+    ("order",   "Content is out of order or on the wrong page", "converter"),
+    ("extra",   "Something is here that should not be", "manual"),
+    ("other",   "Something else",                      "manual"),
+]
+FLAG_KEYS = {k for k, _, _ in FLAGS}
+FLAG_FIX = {k: f for k, _, f in FLAGS}
+RERUNS = [("m1", "Read the pages again (M1)"), ("m2", "Draw the figures again (M2)"),
+          ("converter", "Build the book again (converter)"), ("manual", "Fix by hand")]
+RERUN_KEYS = {k for k, _ in RERUNS}
+
+
+def flag_options() -> dict:
+    """Sent with the book so the screens never hard-code this list twice."""
+    return {"categories": [{"key": k, "label": l, "fix": f} for k, l, f in FLAGS],
+            "reruns": [{"key": k, "label": l} for k, l in RERUNS]}
+
+
 class Decision(BaseModel):
     comment: str = ""
+    category: str = ""
+    rerun: str = ""
 
 
 @router.post("/books/{bid}/pages/{page}/{decision}")
 def decide_page(bid: int, page: int, decision: str, body: Decision, db: Session = Depends(get_db), me=Depends(reviewer)):
-    b = get_book(db, bid, me); editable(b)
+    b = get_book(db, bid, me); page_editable(db, b, page)
     if decision not in ("approve", "reject", "reopen"):
         raise HTTPException(404, "Unknown decision")
     r = db.get(ReviewPage, (bid, page))
@@ -294,11 +349,26 @@ def decide_page(bid: int, page: int, decision: str, body: Decision, db: Session 
         waiting = m2.pending_on_page(C.load(b), page)
         if waiting:
             raise HTTPException(409, f"Choose the original or the new picture for {', '.join(waiting)} first")
-    if decision == "reject" and not body.comment.strip():
-        raise HTTPException(422, "Say what is wrong on this page")
+    if decision == "reject":
+        if not body.comment.strip():
+            raise HTTPException(422, "Say what is wrong on this page")
+        if body.category and body.category not in FLAG_KEYS:
+            raise HTTPException(422, "Unknown issue category")
+        if body.rerun and body.rerun not in RERUN_KEYS:
+            raise HTTPException(422, "Unknown fix")
+        r.category = body.category or "other"
+        # The category knows its usual fix, so a reviewer who does not care
+        # about pipelines can leave it alone and still file something useful.
+        r.rerun = body.rerun or FLAG_FIX.get(r.category, "manual")
+        r.fixed_at, r.fixed_by = None, ""
     r.status = {"approve": "approved", "reject": "rejected", "reopen": "pending"}[decision]
+    if decision == "approve":
+        # Approving closes whatever was flagged here. Keep the category so the
+        # counts stay honest, but it is no longer open.
+        r.fixed_at = r.fixed_at or datetime.utcnow()
     r.comment, r.reviewer, r.updated_at = body.comment.strip(), me.email, datetime.utcnow()
-    log(db, me, f"review.page_{decision}", "book", bid, page=page, comment=r.comment[:200])
+    log(db, me, f"review.page_{decision}", "book", bid, page=page,
+        category=r.category or None, comment=r.comment[:200])
     db.commit()
     return {"page": page, "status": r.status, "progress": progress(db, bid)}
 

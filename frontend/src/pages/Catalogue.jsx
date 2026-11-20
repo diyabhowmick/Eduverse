@@ -49,6 +49,8 @@ export default function Catalogue() {
   const [stage, setStage] = useState(''); const [track, setTrack] = useState('')
   const { data, reload } = useLoad(`/api/books?status=${stage}&track=${track}`, [stage, track])
   const { data: reviewers } = useLoad('/api/reviewers')
+  // One number per book says more than a dashboard: how many pages a reviewer flagged and nobody has fixed.
+  const { data: issues } = useLoad('/api/books/issues/summary')
   const rname = id => reviewers?.find(r => r.id === id)?.name
   const assign = async (b, rid) => { try { await api('/api/reviewers/books/' + b.id, { method: 'PUT', body: { reviewer_id: rid ? +rid : null } }); toast('Reviewer updated'); reload() } catch (e) { toast(e.message, true) } }
   const [edit, setEdit] = useState(null)
@@ -65,12 +67,17 @@ export default function Catalogue() {
             <tr key={b.id}>
               <td><b>{b.title}</b><div className="muted">{b.track === 'exam' ? <span className="tag" style={{ marginRight: 6 }}>Exam pack</span> : null}{[b.subject, b.track !== 'exam' && b.medium, b.edition].filter(Boolean).join(', ')}</div></td>
               <td>{b.track === 'exam' ? b.exam : ''}{b.track === 'exam' && (b.board || b.university) ? <div className="muted">{b.board || b.university}</div> : b.level === 'degree' ? <>{b.university}<div className="muted">{b.course}{b.semester ? ', Sem ' + b.semester : ''}</div></> : b.board}</td><td>{b.grade}</td><td className="num">{b.pages || ''}</td><td className="num">{inr(b.price)}</td>
-              <td><Tag s={b.status} />{b.live_at && b.status === 'live' && <div className="muted">since {day(b.live_at)}{b.reviewed_by ? ', by ' + b.reviewed_by : ''}</div>}
+              <td><Tag s={b.status} />
+                {issues?.open_by_book?.[b.id] ? <Link to="/sa/issues" className="tag bad" style={{ marginLeft: 6, textDecoration: 'none' }} title="Pages a reviewer flagged that are still open">{issues.open_by_book[b.id]} flagged</Link> : null}{b.live_at && b.status === 'live' && <div className="muted">since {day(b.live_at)}{b.reviewed_by ? ', by ' + b.reviewed_by : ''}</div>}
                 {b.status === 'rejected' && b.review_note && <div className="muted" style={{ maxWidth: 260 }}>{b.review_note}</div>}
                 {['in_review', 'processing'].includes(b.status) && reviewers && <select className="input" style={{ marginTop: 4, padding: '3px 6px', fontSize: 12, maxWidth: 190 }} value={b.assigned_reviewer_id || ''} onChange={e => assign(b, e.target.value)}>
                   <option value="">Any reviewer</option>{reviewers.filter(r => r.status === 'active').map(r => <option key={r.id} value={r.id}>Reviewer: {r.name}</option>)}</select>}</td>
               <td className="acts">
                 {b.track === 'exam' && <Link className="btn sm" to={'/sa/exams/' + b.id}>Question papers</Link>}
+                {/* Until now the only way to see what a book actually looks like was to sign in
+                    as a student who owns it. The review endpoints already allow super_admin,
+                    so this needed a route, not a new API. */}
+                {b.track !== 'exam' && b.pages > 0 && <Link className="btn sm" to={'/sa/books/' + b.id} title="Open the book: original scan beside the digital version, page by page">View</Link>}
                 {(b.status === 'approved' || (b.track === 'exam' && !['live', 'retired'].includes(b.status))) && <button className="btn primary sm" onClick={() => move(b, 'go_live', 'Now live')}>Go live</button>}
                 {b.status === 'live' && <button className="btn ghost sm" title="Send it back to the reviewer. Approved pages are kept." onClick={() => ask('Send this book back to the reviewer? Students will not see it until it is approved again. Approved pages are kept, so only what changed is checked.', { yes: 'Pull back' }).then(ok => ok && move(b, 'pull_back', 'Sent back to the reviewer'))}>Pull back</button>}
                 {b.status === 'live' && <button className="btn ghost sm" onClick={() => move(b, 'retire', 'Book retired')}>Retire</button>}

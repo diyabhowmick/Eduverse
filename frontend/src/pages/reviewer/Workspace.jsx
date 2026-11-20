@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { api } from '../../api'
+import { api, auth } from '../../api'
 import { Modal, Field, useToast, Icon, ask } from '../../ui'
 
 const tex = l => { try { return katex.renderToString(l, { displayMode: true, throwOnError: false }) } catch { return l } }
@@ -82,19 +82,34 @@ function Original({ bookId, page, orig }) {
   })}{!orig.flow.length && <div className="empty">Nothing extracted on this page</div>}</div>
 }
 
+/* One workspace, two readers.
+
+   A reviewer opens it from their queue to approve pages. A super admin opens
+   it from the catalogue to see what a book actually looks like — which was
+   impossible before, short of signing in as a student who owned it.
+
+   The review API already allows both (review.py: require("reviewer",
+   "super_admin")), so the only difference here is where "back" goes and
+   whether the finishing actions are offered. Those appear only while a book
+   is in review, so a published book is read-only for everybody. */
 export default function Workspace() {
   const { id } = useParams(); const nav = useNavigate(); const toast = useToast()
+  const [qs] = useSearchParams()
+  // An issue links straight to its page, so land there instead of on page 1.
+  const wanted = Number(qs.get('page')) || null
+  const sa = auth.user()?.role === 'super_admin'
+  const home = sa ? '/sa/catalogue' : '/review'
   const [book, setBook] = useState(null); const [page, setPage] = useState(null); const [pg, setPg] = useState(null)
-  const [reject, setReject] = useState(null); const [comment, setComment] = useState(''); const [word, setWord] = useState('')
+  const [reject, setReject] = useState(null); const [comment, setComment] = useState(''); const [cat, setCat] = useState(''); const [fix, setFix] = useState(''); const [word, setWord] = useState('')
   const [final, setFinal] = useState(null); const [note, setNote] = useState('')
   const [bookErr, setBookErr] = useState(''); const [pageErr, setPageErr] = useState('')
-  const loadBook = useCallback(() => api('/api/review/books/' + id).then(b => { setBook(b); setPage(p => p ?? (b.pages.find(x => x.status !== 'approved') || b.pages[0])?.page) }), [id])
+  const loadBook = useCallback(() => api('/api/review/books/' + id).then(b => { setBook(b); setPage(p => p ?? wanted ?? (b.pages.find(x => x.status !== 'approved') || b.pages[0])?.page) }), [id, wanted])
   const loadPage = useCallback(() => page != null && api(`/api/review/books/${id}/pages/${page}`).then(r => { setPageErr(''); setPg(r) }).catch(e => setPageErr(e.message || 'This page could not be loaded')), [id, page])
   useEffect(() => { loadBook().catch(e => { setBookErr(e.message || 'This book could not be loaded'); toast(e.message, true) }) }, [loadBook])
   useEffect(() => { setPg(null); loadPage() }, [loadPage])
-  if (bookErr && !book) return <div className="page"><div className="empty"><b>This book could not be opened.</b><div className="muted" style={{ margin: '6px 0 12px' }}>{bookErr}</div><button className="btn sm" onClick={() => nav(-1)}>Back to the queue</button></div></div>
+  if (bookErr && !book) return <div className="page"><div className="empty"><b>This book could not be opened.</b><div className="muted" style={{ margin: '6px 0 12px' }}>{bookErr}</div><button className="btn sm" onClick={() => nav(home)}>{sa ? 'Back to the catalogue' : 'Back to the queue'}</button></div></div>
   if (!book) return <div className="page"><div className="empty">Loading book</div></div>
-  if (!book.pages?.length) return <div className="page"><div className="empty"><b>This book has no pages to review.</b><div className="muted" style={{ margin: '6px 0 12px' }}>The conversion produced no content. Ask the super admin to check the job on the Processing screen and run it again.</div><button className="btn sm" onClick={() => nav(-1)}>Back to the queue</button></div></div>
+  if (!book.pages?.length) return <div className="page"><div className="empty"><b>This book has no pages to review.</b><div className="muted" style={{ margin: '6px 0 12px' }}>The conversion produced no content. Ask the super admin to check the job on the Processing screen and run it again.</div><button className="btn sm" onClick={() => nav(home)}>{sa ? 'Back to the catalogue' : 'Back to the queue'}</button></div></div>
   const kws = Object.fromEntries((pg?.chapters || []).flatMap(c => c.keywords.map(k => [k.id, k])))
   const onPageKws = pg ? [...new Set(pg.chapters.flatMap(c => JSON.stringify(c.blocks).match(/k\d+-[a-z0-9-]+/g) || []))].map(k => kws[k]).filter(Boolean) : []
   const chapterNo = pg?.chapters[0]?.number
@@ -103,20 +118,20 @@ export default function Workspace() {
   const act = async (fn, msg, after = () => {}) => { try { const r = await fn(); msg && toast(msg); await loadBook(); await loadPage(); after(r); return true } catch (e) { toast(e.message, true); return false } }
   const change = (bid, body) => act(() => api(`/api/review/books/${id}/blocks/${bid}`, { method: 'PATCH', body }), 'Saved')
   const remove = async b => (await ask('Remove this block from the digital book? The original stays in the source.', { yes: 'Remove' })) && act(() => api(`/api/review/books/${id}/blocks/${b.id}`, { method: 'DELETE' }), 'Block removed')
-  const decide = (d, c = '') => act(() => api(`/api/review/books/${id}/pages/${page}/${d}`, { method: 'POST', body: { comment: c } }), d === 'approve' ? `Page ${page} approved` : d === 'reject' ? `Page ${page} rejected` : 'Page reopened', () => d === 'approve' && next())
+  const decide = (d, c = '', extra = {}) => act(() => api(`/api/review/books/${id}/pages/${page}/${d}`, { method: 'POST', body: { comment: c, ...extra } }), d === 'approve' ? `Page ${page} approved` : d === 'reject' ? `Page ${page} rejected` : 'Page reopened', () => d === 'approve' && next())
   const p = book.progress; const allOk = p.total && p.approved === p.total
   const cur = book.pages[idx]
   return (
     <div className="rv">
       <div className="rv-top">
-        <Link to="/review" className="btn ghost sm">Queue</Link>
+        <Link to={home} className="btn ghost sm">{sa ? 'Catalogue' : 'Queue'}</Link>
         <div><b>{book.title}</b><div className="muted" style={{ fontSize: 12 }}>{book.board}, Class {book.grade}. Detected from the file: {book.detected.title}</div></div>
         <div className="rv-prog"><div className="bar-track" style={{ width: 180 }}><i style={{ width: (p.approved / Math.max(1, p.total) * 100) + '%' }} /></div><span className="muted">{p.approved} of {p.total} pages approved{p.rejected ? `, ${p.rejected} rejected` : ''}{book.to_choose ? `, ${book.to_choose} pictures to choose` : ''}</span></div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        {book.status === 'in_review' ? <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="btn sm" onClick={() => setFinal('back')}>Send back</button>
           <button className="btn sm" disabled={!p.pending} onClick={async () => (await ask(`Approve the ${p.pending} pages still pending?`, { yes: 'Approve' })) && act(() => api(`/api/review/books/${id}/approve-all-remaining`, { method: 'POST' }), null, r => toast(r.held.length ? `${r.approved} pages approved. Still to choose a picture on page ${r.held.join(', ')}` : `${r.approved} pages approved`, !!r.held.length))}>Approve remaining</button>
           <button className="btn primary sm" disabled={!allOk} title={allOk ? '' : 'Approve every page first'} onClick={() => setFinal('publish')}>Approve and publish</button>
-        </div>
+        </div> : <div style={{ marginLeft: 'auto' }} className="muted">Read only — this book is not in review</div>}
       </div>
       <div className="rv-body">
         <nav className="rv-pages">{book.pages.map(x => <button key={x.page} className={'rv-p ' + x.status + (x.page === page ? ' cur' : '')} onClick={() => setPage(x.page)} title={`Page ${x.page}${x.flags ? `, ${x.flags} flagged` : ''}`}>
@@ -129,10 +144,13 @@ export default function Workspace() {
         <aside className="rv-side">
           <div className="rv-card"><div className="h">Page {page}</div>
             <div style={{ margin: '4px 0 10px' }}>{cur?.status === 'approved' ? <span className="tag ok">Approved by {cur.reviewer}</span> : cur?.status === 'rejected' ? <span className="tag bad">Rejected</span> : <span className="tag">Not reviewed</span>}</div>
+            {cur?.status === 'rejected' && cur?.category && <div style={{ marginBottom: 6 }}>
+              <span className="tag warn">{(book.flag_options?.categories || []).find(c => c.key === cur.category)?.label || cur.category}</span>
+              {cur.rerun && <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>Fix: {(book.flag_options?.reruns || []).find(r => r.key === cur.rerun)?.label || cur.rerun}</span>}</div>}
             {cur?.comment && <div className="note" style={{ marginBottom: 10 }}>{cur.comment}</div>}
             {book.status === 'in_review' && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {cur?.status !== 'approved' && <button className="btn primary sm" onClick={() => decide('approve')}>Approve page</button>}
-              {cur?.status !== 'rejected' && <button className="btn sm" onClick={() => { setReject(page); setComment('') }}>Reject page</button>}
+              {cur?.status !== 'rejected' && <button className="btn sm" onClick={() => { setReject(page); setComment(''); setCat(''); setFix('') }}>Flag a problem</button>}
               {cur?.status !== 'pending' && <button className="btn ghost sm" onClick={() => decide('reopen')}>Reopen</button>}
               <button className="btn ghost sm" onClick={next}>Next page</button></div>}</div>
           {pg?.flags.length > 0 && <div className="rv-card flag"><div className="h">Flagged by the converter ({pg.flags.length})</div>{pg.flags.map((f, i) => <div key={i} className="rv-flag"><b>{f.what}</b>{f.text && <div className="muted">{f.text}</div>}</div>)}</div>}
@@ -144,10 +162,22 @@ export default function Workspace() {
           {pg?.removed.length > 0 && <div className="rv-card"><div className="h">Removed by the converter ({pg.removed.length})</div>{pg.removed.map((r, i) => <div key={i} className="rv-flag"><span className="muted">{r.what}:</span> {r.text || 'image'}</div>)}</div>}
         </aside>
       </div>
-      {reject != null && <Modal title={`Reject page ${reject}`} onClose={() => setReject(null)} footer={<><button className="btn" onClick={() => setReject(null)}>Cancel</button><button className="btn primary" onClick={async () => { if (await decide('reject', comment)) setReject(null) }}>Reject page</button></>}>
-        <Field label="What is wrong" hint="Shown to the team that fixes the book"><textarea className="input" rows="3" value={comment} onChange={e => setComment(e.target.value)} placeholder="Figure 1.4 is cut off; the second half of the paragraph is missing" /></Field></Modal>}
+      {reject != null && <Modal title={`Flag page ${reject}`} onClose={() => setReject(null)} footer={<><button className="btn" onClick={() => setReject(null)}>Cancel</button><button className="btn primary" onClick={async () => { if (await decide('reject', comment, { category: cat, rerun: fix })) setReject(null) }}>Flag and reject</button></>}>
+        {/* The category is the part that can be counted. One reviewer's sentence
+            about a cut-off figure helps that page; "figure" counted across the
+            catalogue tells you the pipeline has a figure problem. */}
+        <Field label="What kind of problem" hint="Pick the closest. This is what gets counted across books.">
+          <div className="chips">{(book.flag_options?.categories || []).map(c =>
+            <button key={c.key} type="button" className={'chip' + (cat === c.key ? ' on' : '')} onClick={() => { setCat(c.key); setFix(c.fix) }}>{c.label}</button>)}</div>
+        </Field>
+        <Field label="What is wrong" hint="Say where on the page, so whoever fixes it does not have to hunt"><textarea className="input" rows="3" value={comment} onChange={e => setComment(e.target.value)} placeholder="Figure 1.4 is cut off at the right edge; the second half of the paragraph below it is missing" /></Field>
+        <Field label="What would fix it" hint={cat ? 'Suggested from the problem you picked. Change it if you know better.' : 'Pick a problem above and this fills itself in.'}>
+          <select className="input" value={fix} onChange={e => setFix(e.target.value)}>
+            <option value="">Not sure</option>
+            {(book.flag_options?.reruns || []).map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select></Field></Modal>}
       {final && <Modal title={final === 'publish' ? 'Approve and publish' : 'Send the book back'} onClose={() => setFinal(null)} footer={<><button className="btn" onClick={() => setFinal(null)}>Cancel</button>
-        <button className="btn primary" onClick={() => act(() => api(`/api/review/books/${id}/${final === 'publish' ? 'publish' : 'send-back'}`, { method: 'POST', body: { comment: note } }), final === 'publish' ? 'Book published' : 'Book sent back', () => nav('/review'))}>{final === 'publish' ? 'Publish book' : 'Send back'}</button></>}>
+        <button className="btn primary" onClick={() => act(() => api(`/api/review/books/${id}/${final === 'publish' ? 'publish' : 'send-back'}`, { method: 'POST', body: { comment: note } }), final === 'publish' ? 'Book published' : 'Book sent back', () => nav(home))}>{final === 'publish' ? 'Publish book' : 'Send back'}</button></>}>
         {final === 'publish' ? <p style={{ margin: 0 }}>All {p.total} pages are approved. Publishing makes <b>{book.title}</b> available to schools and students straight away.</p>
           : <p style={{ margin: 0 }}>The book leaves the queue and is not published. Super Admin sees your note and reruns extraction.</p>}
         <Field label={final === 'publish' ? 'Note (optional)' : 'Why it is going back'}><textarea className="input" rows="3" value={note} onChange={e => setNote(e.target.value)} /></Field></Modal>}

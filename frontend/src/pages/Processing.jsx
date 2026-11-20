@@ -1,11 +1,49 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, num, when } from '../api'
 import { useLoad, Page, Modal, Tag, useToast, Icon } from '../ui'
 
+/* Per-stage progress.
+
+   `stage` only says where a job is now, and each stage overwrites pages_done,
+   so once a book moved on there was no way to tell whether it spent forty
+   minutes in M1 or in M2 - the first question anybody asks when processing is
+   slow. The job now records one entry per stage; this draws them. */
+const STAGE_ORDER = ['M1 read', 'M1 build', 'Convert', 'M2']
+const STAGE_LABEL = { 'M1 read': 'M1 - reading pages', 'M1 build': 'M1 - building the document', Convert: 'Converter - building the book', M2: 'M2 - redrawing figures' }
+const took = (a, b) => {
+  if (!a) return null
+  const m = Math.round(((b ? new Date(b) : new Date()) - new Date(a)) / 60000)
+  return m < 1 ? 'under a minute' : m < 60 ? m + ' min' : (m / 60).toFixed(1) + ' h'
+}
+
+function Stages({ j }) {
+  const st = j.stages || {}
+  const names = STAGE_ORDER.filter(n => st[n]).concat(Object.keys(st).filter(n => !STAGE_ORDER.includes(n)))
+  if (!names.length) return <div className="muted" style={{ fontSize: 12, padding: 8 }}>No stage detail recorded. Jobs that ran before this was added do not have it.</div>
+  return (
+    <table className="t" style={{ fontSize: 13 }}>
+      <thead><tr><th>Stage</th><th className="num">Done</th><th className="num">Failed</th><th>Took</th><th>Result</th></tr></thead>
+      <tbody>{names.map(n => {
+        const v = st[n] || {}
+        const running = v.started && !v.finished
+        return (
+          <tr key={n}>
+            <td>{STAGE_LABEL[n] || n}</td>
+            <td className="num">{v.done ?? '-'}{v.pages ? ' of ' + v.pages : ''}</td>
+            <td className="num">{v.failed ? <b style={{ color: 'var(--red)' }}>{v.failed}</b> : '-'}</td>
+            <td className="muted">{took(v.started, v.finished) || '-'}{running ? ' so far' : ''}</td>
+            <td>{v.error ? <Tag s="bad">Failed here</Tag> : running ? <Tag s="info">Running</Tag> : v.finished ? <Tag s="ok">Done</Tag> : <Tag s="info">Not started</Tag>}
+              {v.error && <div className="muted" style={{ fontSize: 12, maxWidth: 420 }}>{v.error}</div>}</td>
+          </tr>)
+      })}</tbody>
+    </table>)
+}
+
 export default function Processing() {
   const jobs = useLoad('/api/jobs'); const sum = useLoad('/api/jobs/summary')
   const [err, setErr] = useState(null); const [used, setUsed] = useState(null)
+  const [open, setOpen] = useState(null)
   const toast = useToast()
   const reload = () => { jobs.reload(); sum.reload() }
   // refresh every 3 seconds while anything is still working
@@ -37,7 +75,7 @@ export default function Processing() {
         <div className="card">
           <table className="t"><thead><tr><th>File</th><th>Book</th><th>Progress</th><th className="num">Cost</th><th>Status</th><th>Started</th><th /></tr></thead>
             <tbody>{jobs.data?.map(j => (
-              <tr key={j.id}>
+              <Fragment key={j.id}><tr>
                 <td><b>{j.filename}</b><div className="muted">{j.kind === 'flow' ? 'Flow document' : 'Printed book'}, by {j.triggered_by}</div></td><td>{j.book}</td>
                 <td style={{ minWidth: 150 }}><div className="bar-track"><i style={{ width: (j.pages ? j.pages_done / j.pages * 100 : 0) + '%', background: j.status === 'failed' ? 'var(--ink-3)' : undefined }} /></div><div className="muted">{j.status === 'running' && j.stage === 'M2' ? `${j.pages_done} of ${j.pages} figures` : `${j.pages_done} of ${j.pages || '?'} pages`}</div></td>
                 <td className="num">{num(j.cost_credits)}</td>
@@ -46,6 +84,7 @@ export default function Processing() {
                   {j.note && <div className="note" style={{ fontSize: 12, marginTop: 6, maxWidth: 320 }}>{j.note}</div>}</td>
                 <td className="muted">{when(j.created_at)}</td>
                 <td className="acts">
+                  <button className="btn ghost sm" onClick={() => setOpen(open === j.id ? null : j.id)} title="M1, the converter and M2 separately">{open === j.id ? 'Hide stages' : 'Stages'}</button>
                   {j.status === 'done' && j.book_status === 'in_review' && <Link className="btn ghost sm" to="/sa/catalogue">See in catalogue</Link>}
                   {j.has_extras && j.status === 'done' && <button className="btn ghost sm" onClick={() => extra(j, 'report')}>M1 report</button>}
                   {j.has_extras && <button className="btn ghost sm" onClick={() => extra(j, 'settings')}>Settings used</button>}
@@ -53,7 +92,9 @@ export default function Processing() {
                   {['failed', 'cancelled'].includes(j.status) && <button className="btn sm" onClick={() => act(j, 'retry', 'Job queued again')}>Retry</button>}
                   {['queued', 'running'].includes(j.status) && <button className="btn ghost sm" onClick={() => act(j, 'cancel', j.status === 'running' ? 'Stopping after this page' : 'Job cancelled')}>Stop</button>}
                 </td>
-              </tr>))}</tbody></table>
+              </tr>
+              {open === j.id && <tr><td colSpan={7} style={{ padding: 0 }}><Stages j={j} /></td></tr>}
+              </Fragment>))}</tbody></table>
           {jobs.data && !jobs.data.length && <div className="empty">Nothing is being processed. <Link to="/sa/add" style={{ color: 'var(--red)', fontWeight: 650 }}>Add a book or document</Link> to start.</div>}
         </div>
       </div>

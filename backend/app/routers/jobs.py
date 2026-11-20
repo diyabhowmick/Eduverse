@@ -28,6 +28,7 @@ def count_pages(data: bytes, name: str) -> int:
 def out(j: Job):
     return {"id": j.id, "stage": j.stage, "filename": j.filename, "status": j.status, "pages": j.pages,
             "pages_done": j.pages_done, "cost_credits": j.cost_credits, "error": j.error, "note": j.note or "",
+            "stages": j.stages or {},
             "triggered_by": j.triggered_by, "created_at": j.created_at, "finished_at": j.finished_at,
             "book_id": j.book_id, "book": j.book.title if j.book else "", "book_status": j.book.status if j.book else "",
             "kind": j.kind or ("flow" if j.filename.lower().endswith(".docx") else "book"), "has_extras": bool(j.extras_key)}
@@ -50,9 +51,44 @@ def _update(job_id, **kw):
         j = db.get(Job, job_id)
         for k, v in kw.items():
             setattr(j, k, v)
+        _mark(j, kw.get("stage"), pages=kw.get("pages"), done=kw.get("pages_done"))
         db.commit()
     finally:
         db.close()
+
+
+def _mark(j: Job, name: str | None, *, pages=None, done=None, failed=None, error=None, end=False):
+    """Record what each stage did, so a finished job can still answer
+    "where did the time go". `stage` alone cannot: it holds only where the job
+    is now, and every stage overwrites pages_done.
+
+    Safe to call with the stage the job is already in — it just updates it.
+    """
+    st = dict(j.stages or {})
+    name = name or j.stage
+    if not name or name in ("Queued",):
+        j.stages = st
+        return
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    cur = dict(st.get(name) or {})
+    if not cur.get("started"):
+        cur["started"] = now
+        # Whatever ran before this is finished the moment a new stage starts.
+        for other, v in st.items():
+            if other != name and isinstance(v, dict) and v.get("started") and not v.get("finished"):
+                v["finished"] = now
+    if pages is not None:
+        cur["pages"] = pages
+    if done is not None:
+        cur["done"] = done
+    if failed is not None:
+        cur["failed"] = failed
+    if error is not None:
+        cur["error"] = str(error)[:300]
+    if end:
+        cur["finished"] = now
+    st[name] = cur
+    j.stages = st            # reassign: SQLAlchemy does not see in-place JSON edits
 
 
 def _doc_to_docx(src: Path) -> Path:
@@ -137,7 +173,7 @@ def run_m1(job_id: int):
         try:
             specs = {}
             if (j.kind or ("flow" if j.filename.lower().endswith(".docx") else "book")) == "flow":
-                j.status, j.stage = "running", "Convert"; db.commit()
+                j.status, j.stage = "running", "Convert"; _mark(j, "Convert"); db.commit()
                 flow = store.get(j.storage_key)
                 j.book.flow_key = j.storage_key
             else:
@@ -145,12 +181,12 @@ def run_m1(job_id: int):
                     db.refresh(j)
                     if j.status == "cancelled":
                         return
-                    j.status, j.stage, j.pages_done = "running", "M1 read", 0; db.commit()
+                    j.status, j.stage, j.pages_done = "running", "M1 read", 0; _mark(j, "M1 read"); db.commit()
                     flow, specs = _run_m1_extract(j, store, job_id)
                 db.expire_all(); j = db.get(Job, job_id)
                 key = j.storage_key.rsplit("/", 1)[0] + "/flow.docx"
                 store.put(key, flow); j.book.flow_key = key
-                j.stage = "Convert"; db.commit()
+                j.stage = "Convert"; _mark(j, "Convert"); db.commit()
             _rep = ingest_flow(db, j.book, flow)
             # A book that had to be split by heading or by page still reaches
             # the reviewer, but the super admin should be told it is not a
@@ -166,23 +202,28 @@ def run_m1(job_id: int):
             j.pages = j.pages or j.book.pages
             if m2.settings_of(db).get("enabled"):
                 j.book.status = "processing"  # the reviewer gets it once the figures are redrawn
-                j.stage, j.pages_done = "M2", 0; db.commit()
+                j.stage, j.pages_done = "M2", 0; _mark(j, "M2"); db.commit()
                 book = j.book
                 m2.run_book(db, book, lambda d, t: _update(job_id, pages_done=d, pages=t))
                 db.expire_all(); j = db.get(Job, job_id)
                 j.book.status = "in_review"
+            _mark(j, j.stage, end=True)
             j.status, j.stage, j.finished_at = "done", "Done", datetime.utcnow()
             j.pages_done = j.pages = j.book.pages
         except Cancelled:
             # Stopped on purpose, so it is not a failure and the half-made book
             # is not offered to a reviewer.
             db.rollback(); j = db.get(Job, job_id)
+            _mark(j, j.stage, end=True)
             j.status, j.stage, j.finished_at = "cancelled", "Stopped", datetime.utcnow()
             j.error = ""
             if j.book and j.book.status == "processing":
                 j.book.status = "upcoming"
         except Exception as e:
             db.rollback(); j = db.get(Job, job_id)
+            # Pin the error to the stage it happened in, so "where did it break"
+            # is answerable after the fact and not only from the log.
+            _mark(j, j.stage, error=str(e), end=True)
             j.status, j.error, j.finished_at = "failed", str(e)[-2000:], datetime.utcnow()
             if j.book and j.book.status == "processing" and j.book.content_key:
                 j.book.status = "in_review"  # converted content is still reviewable

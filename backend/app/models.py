@@ -275,6 +275,13 @@ class Job(Base):
     kind: Mapped[str] = mapped_column(String(10), default="")  # book (printed book, runs M1) | flow (M1 output, convert only)
     extras_key: Mapped[str] = mapped_column(String(400), default="")  # M1 report, ledger and settings used
     note: Mapped[str] = mapped_column(Text, default="")  # warning on a job that still finished, e.g. book split by page
+    # `stage` only ever holds where the job is NOW, and each stage overwrites
+    # pages_done, so once a job moved on there was no way to tell whether it
+    # spent forty minutes in M1 or in M2 — which is exactly what people ask
+    # when a book takes too long. This keeps one entry per stage:
+    #   {"M1 read": {"started": iso, "finished": iso, "pages": 212,
+    #                "done": 212, "failed": 0, "error": ""}, ...}
+    stages: Mapped[dict] = mapped_column(JSON, default=dict)
     book = relationship("Book")
 
 
@@ -286,6 +293,18 @@ class ReviewPage(Base):
     comment: Mapped[str] = mapped_column(Text, default="")
     reviewer: Mapped[str] = mapped_column(String(160), default="")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # What kind of problem, and what would fix it. A free-text comment says what
+    # one reviewer saw; a category can be counted, which is what tells you
+    # whether the pipeline has a figure problem or a maths problem.
+    # Categories and their default fix live in review.py FLAGS.
+    category: Mapped[str] = mapped_column(String(20), default="", index=True)
+    rerun: Mapped[str] = mapped_column(String(20), default="")   # m1 | m2 | converter | manual
+    # A rejected page is an open issue. It becomes pending when somebody fixes
+    # it (re-review needed), and approved when the fix is accepted — so the
+    # page's own status already carries the whole issue lifecycle, and there is
+    # no second table to disagree with it.
+    fixed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fixed_by: Mapped[str] = mapped_column(String(160), default="")
 
 
 class Setting(Base):

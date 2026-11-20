@@ -11,6 +11,7 @@ const Admins = lazy(() => import('./pages/Admins'))
 const Schools = lazy(() => import('./pages/Schools'))
 const Pricing = lazy(() => import('./pages/Pricing'))
 const Catalogue = lazy(() => import('./pages/Catalogue'))
+const Issues = lazy(() => import('./pages/Issues'))
 const Processing = lazy(() => import('./pages/Processing'))
 const AISettings = lazy(() => import('./pages/AISettings'))
 const M1Settings = lazy(() => import('./pages/M1Settings'))
@@ -47,7 +48,7 @@ const RPapers = lazy(() => import('./pages/reviewer/Papers'))
 
 const SA_NAV = [
   ['', 'home', 'Overview'], ['add', 'upload', 'Add content'],
-  ['__group', 'Content'], ['catalogue', 'book', 'Catalogue'], ['processing', 'job', 'Processing'], ['extraction', 'scan', 'Book reading (M1)'], ['figures', 'image', 'Figure redraw (M2)'],
+  ['__group', 'Content'], ['catalogue', 'book', 'Catalogue'], ['issues', 'shield', 'Flags and issues'], ['processing', 'job', 'Processing'], ['extraction', 'scan', 'Book reading (M1)'], ['figures', 'image', 'Figure redraw (M2)'],
   ['__group', 'People'], ['schools', 'school', 'Organisations'], ['requests', 'inbox', 'Organisation requests'], ['admins', 'admins', 'Admins'], ['reviewers', 'shield', 'Reviewers'],
   ['__group', 'Business'], ['pricing', 'price', 'Pricing'], ['analytics', 'chart', 'Analytics'], ['usage', 'target', 'AI usage'],
   ['__group', 'Settings'], ['ai', 'ai', 'AI settings'], ['platform', 'settings', 'Platform settings'], ['audit', 'audit', 'Audit log'],
@@ -64,7 +65,11 @@ function SuperShell() {
     <Layout nav={SA_NAV} base="/sa" role="Super Admin" loginPath="/login/superadmin" counts={c}>
       <Routes>
         <Route index element={<Dashboard />} /><Route path="add" element={<AddContent />} /><Route path="admins" element={<Admins />} /><Route path="reviewers" element={<Reviewers />} /><Route path="schools" element={<Schools />} />
-        <Route path="requests" element={<Requests />} /><Route path="pricing" element={<Pricing />} /><Route path="catalogue" element={<Catalogue />} /><Route path="exams/:id" element={<ExamPapers />} />
+        <Route path="requests" element={<Requests />} /><Route path="pricing" element={<Pricing />} /><Route path="catalogue" element={<Catalogue />} /><Route path="issues" element={<Issues />} /><Route path="exams/:id" element={<ExamPapers />} />
+        {/* The same workspace the reviewer uses. review.py already guards on
+            require("reviewer", "super_admin"), so no new endpoint is involved;
+            the page hides its review actions unless the book is in review. */}
+        <Route path="books/:id" element={<RWorkspace />} />
         <Route path="processing" element={<Processing />} /><Route path="ai" element={<AISettings />} /><Route path="usage" element={<AiUsage />} /><Route path="extraction" element={<M1Settings />} /><Route path="figures" element={<M2Settings />} /><Route path="analytics" element={<Analytics />} />
         <Route path="platform" element={<Platform />} /><Route path="audit" element={<Audit />} />
       </Routes>
