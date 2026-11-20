@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { api } from '../../api'
-import { Modal, Field, useToast, Icon } from '../../ui'
+import { Modal, Field, useToast, Icon, ask } from '../../ui'
 
 const tex = l => { try { return katex.renderToString(l, { displayMode: true, throwOnError: false }) } catch { return l } }
 
@@ -87,11 +87,14 @@ export default function Workspace() {
   const [book, setBook] = useState(null); const [page, setPage] = useState(null); const [pg, setPg] = useState(null)
   const [reject, setReject] = useState(null); const [comment, setComment] = useState(''); const [word, setWord] = useState('')
   const [final, setFinal] = useState(null); const [note, setNote] = useState('')
+  const [bookErr, setBookErr] = useState(''); const [pageErr, setPageErr] = useState('')
   const loadBook = useCallback(() => api('/api/review/books/' + id).then(b => { setBook(b); setPage(p => p ?? (b.pages.find(x => x.status !== 'approved') || b.pages[0])?.page) }), [id])
-  const loadPage = useCallback(() => page != null && api(`/api/review/books/${id}/pages/${page}`).then(setPg), [id, page])
-  useEffect(() => { loadBook().catch(e => toast(e.message, true)) }, [loadBook])
+  const loadPage = useCallback(() => page != null && api(`/api/review/books/${id}/pages/${page}`).then(r => { setPageErr(''); setPg(r) }).catch(e => setPageErr(e.message || 'This page could not be loaded')), [id, page])
+  useEffect(() => { loadBook().catch(e => { setBookErr(e.message || 'This book could not be loaded'); toast(e.message, true) }) }, [loadBook])
   useEffect(() => { setPg(null); loadPage() }, [loadPage])
+  if (bookErr && !book) return <div className="page"><div className="empty"><b>This book could not be opened.</b><div className="muted" style={{ margin: '6px 0 12px' }}>{bookErr}</div><button className="btn sm" onClick={() => nav(-1)}>Back to the queue</button></div></div>
   if (!book) return <div className="page"><div className="empty">Loading book</div></div>
+  if (!book.pages?.length) return <div className="page"><div className="empty"><b>This book has no pages to review.</b><div className="muted" style={{ margin: '6px 0 12px' }}>The conversion produced no content. Ask the super admin to check the job on the Processing screen and run it again.</div><button className="btn sm" onClick={() => nav(-1)}>Back to the queue</button></div></div>
   const kws = Object.fromEntries((pg?.chapters || []).flatMap(c => c.keywords.map(k => [k.id, k])))
   const onPageKws = pg ? [...new Set(pg.chapters.flatMap(c => JSON.stringify(c.blocks).match(/k\d+-[a-z0-9-]+/g) || []))].map(k => kws[k]).filter(Boolean) : []
   const chapterNo = pg?.chapters[0]?.number
@@ -99,7 +102,7 @@ export default function Workspace() {
   const next = () => { const n = book.pages.slice(idx + 1).find(p => p.status !== 'approved') || book.pages[idx + 1]; if (n) setPage(n.page) }
   const act = async (fn, msg, after = () => {}) => { try { const r = await fn(); msg && toast(msg); await loadBook(); await loadPage(); after(r); return true } catch (e) { toast(e.message, true); return false } }
   const change = (bid, body) => act(() => api(`/api/review/books/${id}/blocks/${bid}`, { method: 'PATCH', body }), 'Saved')
-  const remove = b => confirm('Remove this block from the digital book? The original stays in the source.') && act(() => api(`/api/review/books/${id}/blocks/${b.id}`, { method: 'DELETE' }), 'Block removed')
+  const remove = async b => (await ask('Remove this block from the digital book? The original stays in the source.', { yes: 'Remove' })) && act(() => api(`/api/review/books/${id}/blocks/${b.id}`, { method: 'DELETE' }), 'Block removed')
   const decide = (d, c = '') => act(() => api(`/api/review/books/${id}/pages/${page}/${d}`, { method: 'POST', body: { comment: c } }), d === 'approve' ? `Page ${page} approved` : d === 'reject' ? `Page ${page} rejected` : 'Page reopened', () => d === 'approve' && next())
   const p = book.progress; const allOk = p.total && p.approved === p.total
   const cur = book.pages[idx]
@@ -111,7 +114,7 @@ export default function Workspace() {
         <div className="rv-prog"><div className="bar-track" style={{ width: 180 }}><i style={{ width: (p.approved / Math.max(1, p.total) * 100) + '%' }} /></div><span className="muted">{p.approved} of {p.total} pages approved{p.rejected ? `, ${p.rejected} rejected` : ''}{book.to_choose ? `, ${book.to_choose} pictures to choose` : ''}</span></div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="btn sm" onClick={() => setFinal('back')}>Send back</button>
-          <button className="btn sm" disabled={!p.pending} onClick={() => confirm(`Approve the ${p.pending} pages still pending?`) && act(() => api(`/api/review/books/${id}/approve-all-remaining`, { method: 'POST' }), null, r => toast(r.held.length ? `${r.approved} pages approved. Still to choose a picture on page ${r.held.join(', ')}` : `${r.approved} pages approved`, !!r.held.length))}>Approve remaining</button>
+          <button className="btn sm" disabled={!p.pending} onClick={async () => (await ask(`Approve the ${p.pending} pages still pending?`, { yes: 'Approve' })) && act(() => api(`/api/review/books/${id}/approve-all-remaining`, { method: 'POST' }), null, r => toast(r.held.length ? `${r.approved} pages approved. Still to choose a picture on page ${r.held.join(', ')}` : `${r.approved} pages approved`, !!r.held.length))}>Approve remaining</button>
           <button className="btn primary sm" disabled={!allOk} title={allOk ? '' : 'Approve every page first'} onClick={() => setFinal('publish')}>Approve and publish</button>
         </div>
       </div>
@@ -119,7 +122,7 @@ export default function Workspace() {
         <nav className="rv-pages">{book.pages.map(x => <button key={x.page} className={'rv-p ' + x.status + (x.page === page ? ' cur' : '')} onClick={() => setPage(x.page)} title={`Page ${x.page}${x.flags ? `, ${x.flags} flagged` : ''}`}>
           {x.page}{x.choose ? <i className="m2" title={`${x.choose} pictures to choose`}>{x.choose}</i> : x.flags ? <i>{x.flags}</i> : null}</button>)}</nav>
         <section className="rv-col"><div className="rv-colh">Original page {page}<span className="muted">{pg?.original.pdf ? 'Uploaded PDF' : 'M1 extraction'}</span></div>
-          <div className="rv-scroll">{pg ? <Original bookId={id} page={page} orig={pg.original} /> : <div className="empty">Loading</div>}</div></section>
+          <div className="rv-scroll">{pg ? <Original bookId={id} page={page} orig={pg.original} /> : <div className="empty">{pageErr ? 'Page ' + page + ' could not be loaded: ' + pageErr : 'Loading'}</div>}</div></section>
         <section className="rv-col"><div className="rv-colh">Digital book, page {page}<span className="muted">{pg?.chapters.map(c => `Unit ${c.number} ${c.title}`).join(', ')}</span></div>
           <div className="rv-scroll rv-digital">{pg?.chapters.flatMap(c => c.blocks).map(b => <Block key={b.id} b={b} kws={kws} bookId={id} onChange={change} onRemove={remove} act={act} />)}
             {pg && !pg.chapters.length && <div className="empty">This page has no reading content (front matter or removed items only)</div>}</div></section>

@@ -9,15 +9,43 @@ const DEPTH = [['exam', 'Exam'], ['concept_clarity', 'Concept clarity'], ['curio
 export default function AISettings() {
   const { data } = useLoad('/api/settings/ai')
   const [v, setV] = useState(null); const toast = useToast()
+  const status = useLoad('/api/settings/openai/status')
+  const [test, setTest] = useState(null); const [testing, setTesting] = useState(false)
   useEffect(() => { data && setV(structuredClone(data)) }, [data])
   if (!v) return <Page title="AI settings" />
   const p = v.providers[v.provider]
   const setP = (k, x) => setV(s => ({ ...s, providers: { ...s.providers, [s.provider]: { ...s.providers[s.provider], [k]: x } } }))
   const set = (k, x) => setV(s => ({ ...s, [k]: x }))
+  const o = v.providers.openai
+  const setO = x => setV(s => ({ ...s, providers: { ...s.providers, openai: { ...s.providers.openai, api_key: x } } }))
+  async function saveAndTest() {
+    setTesting(true); setTest(null)
+    try {
+      setV(await api('/api/settings/ai', { method: 'PUT', body: v })); status.reload()
+      const r = await api('/api/settings/openai/test', { method: 'POST' })
+      setTest({ ok: true, text: `Connected. ${r.model} answered using the key ${r.source === 'env' ? 'in backend/.env' : 'saved here'}.` })
+    } catch (e) { setTest({ ok: false, text: e.message }) } finally { setTesting(false) }
+  }
   async function save() { try { setV(await api('/api/settings/ai', { method: 'PUT', body: v })); toast('AI settings saved') } catch (e) { toast(e.message, true) } }
   return (
     <Page title="AI settings" sub="The model behind every student explanation, and how far it goes" actions={<button className="btn primary" onClick={save}>Save changes</button>}>
       <div className="stack">
+        <div className="card">
+          <div className="card-h"><h3>OpenAI connection</h3><span className="sub">Reads question papers and writes answers</span>
+            {status.data && <span className={'tag right ' + (status.data.has_key ? 'ok' : 'warn')}>{status.data.has_key ? (status.data.source === 'env' ? 'Key in backend/.env' : 'Key saved') : 'No key yet'}</span>}</div>
+          <div className="card-b stack">
+            <div className="grid3">
+              <Field label="OpenAI API key" hint={o.api_key === 'saved' ? 'A key is saved. Type to replace it.' : 'Starts with sk-. Stored on this server and never shown again.'}><input className="input" type="password" autoComplete="off" placeholder={o.api_key === 'saved' ? 'Saved' : 'Paste your key'} value={o.api_key === 'saved' ? '' : o.api_key} onChange={e => setO(e.target.value || (data.providers.openai.api_key === 'saved' ? 'saved' : ''))} /></Field>
+              <Field label="Model for reading papers" hint="Must accept images. It copies each page."><input className="input" value={v.exam_model ?? 'gpt-4.1'} onChange={e => set('exam_model', e.target.value)} /></Field>
+              <Field label="Model for writing answers" hint="Works out each answer. Stronger models are more accurate and cost more."><input className="input" value={v.answer_model ?? 'gpt-5.5'} onChange={e => set('answer_model', e.target.value)} /></Field>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn primary" disabled={testing} onClick={saveAndTest}>{testing ? 'Testing' : 'Save and test connection'}</button>
+              {test && <span className={test.ok ? 'tag ok' : 'tag bad'} style={{ whiteSpace: 'normal' }} role="status">{test.text}</span>}
+            </div>
+            <div className="note">This does not change the model behind student explanations, which is set below. Each paper page and each generated answer is a paid OpenAI request.</div>
+          </div>
+        </div>
         <div className="card">
           <div className="card-h"><h3>Explanation model</h3><span className="sub">Used in the student reader</span></div>
           <div className="card-b stack">

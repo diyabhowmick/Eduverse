@@ -7,6 +7,8 @@ AI = {
         "anthropic": {"base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-6", "api_key": ""},
         "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4.1-mini", "api_key": ""},
     },
+    "exam_model": "gpt-4.1",       # reads question papers; must accept images
+    "answer_model": "gpt-5.5",     # works out the answers
     "m1_model": "qwen3.5:4b",
     "m1_credits_per_page": 1,
     "temperature": 0.3,
@@ -32,6 +34,8 @@ BRANDING = {
 
 FEATURES = {
     "student_store": True,
+    "public_signup": True,     # individuals (B2C) can create their own student account
+    "exam_track": True,        # exam packs: past papers, recap, mock tests
     "upcoming_books": True,
     "explain_panel": True,
     "notebook": True,
@@ -45,11 +49,8 @@ PERMISSIONS = {
     "manage_admins": ["super_admin"],
     "manage_pricing": ["super_admin"],
     "manage_schools": ["super_admin"],
-    # The factory: books in, books out. Platform Admin's job.
-    "manage_catalogue": ["super_admin", "platform_admin"],
-    "run_processing": ["super_admin", "platform_admin"],
-    "manage_reviewers": ["super_admin", "platform_admin"],
-    "manage_keys": ["super_admin", "platform_admin"],
+    "manage_catalogue": ["super_admin"],
+    "run_processing": ["super_admin"],
     "review_books": ["super_admin", "reviewer"],
     "manage_students": ["super_admin", "admin"],
     "assign_books": ["super_admin", "admin"],

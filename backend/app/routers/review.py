@@ -261,7 +261,7 @@ def regenerate_figure(bid: int, block_id: str, body: Regenerate, db: Session = D
         d = blk.get("desc") or {"kind": "image", "type": "photo", "parts": [], "relations": [], "data": [], "text_in_figure": []}
         d["summary"] = body.summary.strip()
         blk["desc"] = d
-    cfg = m2.settings_of(db)
+    cfg = m2.with_env(m2.settings_of(db))
     report = C.load_extra(b, "m2_report.json") or {}
     specs = C.load_extra(b, "m1_specs.json") or {}
     rec = m2.redo_figure(b, blk, specs, cfg, report, allow_svg=not body.use_model and body.summary is None)

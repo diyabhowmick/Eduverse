@@ -16,10 +16,7 @@ class AdminIn(BaseModel):
     name: str = Field(min_length=2)
     email: str
     phone: str = ""
-    # A school admin belongs to one school. A platform admin belongs to none —
-    # they run the factory, which is the same for every school.
-    role: str = "admin"
-    school_id: int | None = None
+    school_id: int
     password: str | None = None
 
 
@@ -32,7 +29,8 @@ class AdminPatch(BaseModel):
 
 class SchoolIn(BaseModel):
     name: str = Field(min_length=2)
-    board: str
+    kind: str = "school"
+    board: str = ""
     medium: str = "English"
     city: str = ""
     contact_name: str = ""
@@ -72,6 +70,13 @@ class BookIn(BaseModel):
     pages: int = 0
     price: float = 0
     status: str = "upcoming"
+    track: str = "textbook"
+    level: str = "school"
+    exam: str = ""
+    university: str = ""
+    course: str = ""
+    semester: str = ""
+    linked_book_ids: list[int] = []
 
 
 class BookPatch(BaseModel):
@@ -82,3 +87,24 @@ class BookPatch(BaseModel):
     medium: str | None = None
     edition: str | None = None
     price: float | None = None
+    track: str | None = None
+    level: str | None = None
+    exam: str | None = None
+    university: str | None = None
+    course: str | None = None
+    semester: str | None = None
+    linked_book_ids: list[int] | None = None
+
+
+class SignupIn(BaseModel):
+    name: str = Field(min_length=2)
+    email: str
+    password: str = Field(min_length=8)
+    phone: str = ""
+    track: str = "textbook"
+    level: str = "school"
+    board: str = ""
+    grade: str = ""
+    exam: str = ""
+    university: str = ""
+    course: str = ""

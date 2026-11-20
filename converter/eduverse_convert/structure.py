@@ -170,12 +170,24 @@ def fallback_starts(items):
     split by page is not as good as one split by chapter, but the reviewer can
     work with it, which is the whole point.
     """
-    # 1 · any heading, even without a number in front of it
-    heads = [i for i, e in enumerate(items)
-             if e["kind"] == "p" and e.get("style") in HEADING_STYLES
-             and len((e.get("text") or "").strip()) > 2]
-    if len(heads) >= 2:
-        return [(n + 1, i) for n, i in enumerate(heads)], "headings"
+    # 1 · headings, even without a number in front of them. Split only at the
+    # TOP heading level the book uses (H1 if it has at least two, else H2,
+    # else H3). Splitting at every level turned each subheading into its own
+    # unit and broke a chapter into fragments; lower levels stay inside the
+    # unit as subheadings.
+    def heads_at(style):
+        return [i for i, e in enumerate(items)
+                if e["kind"] == "p" and e.get("style") == style
+                and len((e.get("text") or "").strip()) > 2]
+    for style in ("EVH1", "EVH2", "EVH3"):
+        heads = heads_at(style)
+        if len(heads) >= 2:
+            # Text before the first heading (a preface, an opening page) would
+            # otherwise belong to no unit and be dropped silently. It joins
+            # the first unit instead.
+            if heads[0] > 0:
+                heads[0] = 0
+            return [(n + 1, i) for n, i in enumerate(heads)], "headings"
 
     # 2 · one unit per page. Always possible.
     seen, out = set(), []
@@ -310,11 +322,15 @@ def build(raw):
             if inside in ("glossary", "references", "internet", "exercises", "problem"):
                 protected.add(i)
         labels, merges = figure_label_runs(seq, protected, frozenset(rep))
-        title = toc_titles.get(n) or ""
+        title = (toc_titles.get(n) or "") if split == "sections" else ""
+        if split == "pages":
+            title = f"Page {items[s]['page']}"
         if not title:  # no index: take the heading before the first section
-            for i, el in seq:
-                if el["kind"] == "p" and el["style"] == "EVH1" and not box_kind(el["text"]):
-                    title = el["text"].strip().title(); break
+            for want in ("EVH1", "EVH2", "EVH3"):  # highest heading level present in this unit
+                hit = next((el for i, el in seq if el["kind"] == "p" and el["style"] == want
+                            and el.get("text", "").strip() and not box_kind(el["text"])), None)
+                if hit:
+                    title = hit["text"].strip().title(); break
         ch = {"number": n, "title": title or f"Unit {n}", "page_start": items[s]["page"], "page_end": items[e - 1]["page"],
               "sections": [], "blocks": []}
         # captions available in this chapter

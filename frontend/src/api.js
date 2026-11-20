@@ -6,6 +6,22 @@ export const auth = {
   clear() { localStorage.removeItem(KEY); localStorage.removeItem('ev_user') },
 }
 
+export const LOGIN = { super_admin: '/login/superadmin', admin: '/login/admin', reviewer: '/login/reviewer', student: '/login/student', teacher: '/login/teacher' }
+
+// Anyone still working gets a fresh token before the old one runs out.
+let lastRenew = 0
+function renew() {
+  const now = Date.now()
+  if (!auth.token || now - lastRenew < 600000) return
+  try {
+    const exp = JSON.parse(atob(auth.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp * 1000
+    if (exp - now > 6 * 3600000) return
+  } catch { return }
+  lastRenew = now
+  fetch('/api/auth/refresh', { method: 'POST', headers: { Authorization: 'Bearer ' + auth.token } })
+    .then(r => r.ok ? r.json() : null).then(d => { if (d?.token) localStorage.setItem(KEY, d.token) }).catch(() => {})
+}
+
 export async function api(path, { method = 'GET', body, form } = {}) {
   const headers = {}
   if (auth.token) headers.Authorization = 'Bearer ' + auth.token
@@ -13,12 +29,17 @@ export async function api(path, { method = 'GET', body, form } = {}) {
   if (form) payload = form
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body) }
   const r = await fetch(path, { method, headers, body: payload })
-  if (r.status === 401 && !path.includes('/auth/login')) { const r = auth.user()?.role; auth.clear(); location.href = { admin: '/login/admin', reviewer: '/login/reviewer', student: '/login/student' }[r] || '/login/superadmin' }
+  if (r.status === 401 && !path.includes('/auth/login')) {
+    // The page stays as it is, with its form and chosen files, while the person signs in again on top of it.
+    if (auth.user()) { window.dispatchEvent(new Event('ev:session-expired')); throw new Error('Your session expired. Sign in again, then try once more. Nothing on this page was lost.') }
+    auth.clear(); location.href = LOGIN.super_admin
+  }
   const data = await r.json().catch(() => ({}))
   if (!r.ok) {
     const d = data.detail
     throw new Error(Array.isArray(d) ? d.map(x => `${x.loc?.slice(-1)[0]}: ${x.msg}`).join(', ') : d || 'Request failed')
   }
+  renew()
   return data
 }
 
@@ -45,6 +66,9 @@ const ACTIONS = {
   'review.publish': 'Published a book', 'review.send_back': 'Sent a book back',
   'reviewer.create': 'Added reviewer', 'reviewer.update': 'Updated reviewer', 'reviewer.reset_password': 'Reset reviewer password', 'book.assign_reviewer': 'Assigned a reviewer',
   'student.purchase': 'Got a book from the store',
+  'explanation.pin': 'Pinned an explanation', 'explanation.retire': 'Retired an explanation', 'explanation.restore': 'Restored an explanation',
+  'explanation.edit': 'Edited an explanation', 'explanation.prepare': 'Wrote explanations ahead',
+  'paper.create': 'Added a question paper', 'paper.publish': 'Published a question paper', 'paper.read_ai': 'Read a paper with AI', 'paper.answer_ai': 'Generated answers with AI',
   'settings.ai': 'Changed AI settings', 'settings.branding': 'Changed branding', 'settings.features': 'Changed features', 'settings.permissions': 'Changed permissions',
 }
 export const actionLabel = a => ACTIONS[a] || a

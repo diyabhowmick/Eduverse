@@ -14,12 +14,6 @@ def ensure_core(db: Session):
     if not db.query(User).filter(User.role == "super_admin").first():
         db.add(User(email=settings.superadmin_email, name="Super Admin", role="super_admin",
                     password_hash=hash_pw(settings.superadmin_password)))
-    # The factory needs an owner on day one, or the first book has to be
-    # processed by the Super Admin — which is the job this role exists to take.
-    if not db.query(User).filter(User.role == "platform_admin").first():
-        db.add(User(email="platform@eduverse.local", name="Platform Admin",
-                    role="platform_admin",
-                    password_hash=hash_pw(settings.superadmin_password)))
     for k, v in ALL.items():
         if not db.get(Setting, k):
             db.add(Setting(key=k, value=v))
@@ -176,28 +170,8 @@ def demo(db: Session):
     print("Demo data loaded")
 
 
-def wait_for_db(engine, seconds: int = 60):
-    """On a hosted platform the app container often starts before the database
-    is accepting connections. Without this the very first deploy dies on a race
-    and the log says "connection refused", which looks like a wrong password.
-    """
-    import time
-    from sqlalchemy import text
-    last = None
-    for _ in range(seconds):
-        try:
-            with engine.connect() as con:
-                con.execute(text("SELECT 1"))
-            return
-        except Exception as e:                      # noqa: BLE001 - any driver error
-            last = e
-            time.sleep(1)
-    raise SystemExit(f"Database not reachable after {seconds}s: {last}")
-
-
 if __name__ == "__main__":
     from .db import Base, engine, SessionLocal
-    wait_for_db(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         ensure_core(db)

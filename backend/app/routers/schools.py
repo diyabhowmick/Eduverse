@@ -19,7 +19,7 @@ def annual_value(s: School) -> float:
 
 
 def out(s: School, students: int = 0, admins: int = 0):
-    return {"id": s.id, "name": s.name, "board": s.board, "medium": s.medium, "city": s.city,
+    return {"id": s.id, "name": s.name, "kind": s.kind or "school", "board": s.board, "medium": s.medium, "city": s.city,
             "contact_name": s.contact_name, "contact_email": s.contact_email, "academic_year": s.academic_year,
             "plan_id": s.plan_id, "plan": s.plan.name if s.plan else "", "seats": s.seats,
             "discount_id": s.discount_id, "discount": s.discount.code if s.discount else "",

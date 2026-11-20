@@ -3,13 +3,28 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import Base, engine, SessionLocal
-from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, money, ask, factory
+from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn
 from .seed import ensure_core
 
 app = FastAPI(title="EduVerse API", version="0.1.0")
-for r in (auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, money, ask, factory):
+for r in (auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline):
     app.include_router(r.router)
 app.include_router(review.public)
+app.include_router(exams.router)
+app.include_router(exams.srouter)
+app.include_router(learn.router)
+
+
+@app.get("/api/taxonomy")
+def taxonomy():
+    """Boards, states, classes and exams the forms and the store offer. Public: the sign-up page needs it."""
+    from .taxonomy import all_
+    from .models import Setting
+    from .defaults import FEATURES
+    with SessionLocal() as db:
+        f = db.get(Setting, "features")
+        feats = {**FEATURES, **(f.value if f else {})}
+    return {**all_(), "public_signup": feats.get("public_signup", True), "exam_track": feats.get("exam_track", True)}
 
 
 def add_missing_columns():

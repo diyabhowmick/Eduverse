@@ -1,5 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { api } from './api'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import { api, auth } from './api'
 
 const P = {
   home: 'M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
@@ -21,12 +24,96 @@ const P = {
   download: 'M12 4v12M7 11l5 5 5-5M4 20h16',
   scan: 'M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M7 12h10',
   image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15.5 9.5h.01',
-  key: 'M15 7a4 4 0 1 1-3.3 6.3L10 15H8v2H6v2H3v-3l7.7-7.7A4 4 0 0 1 15 7zM16.5 9.5h.01',
-  pulse: 'M3 12h3l2.5-7 3.5 14 3-7h6',
+  star: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
+  flag: 'M5 21V4M5 4h11l-2 4 2 4H5',
+  play: 'M7 4l13 8-13 8z',
+  grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+  left: 'M15 5l-7 7 7 7', right: 'M9 5l7 7-7 7',
+  check: 'M4 12l5 5L20 6',
+  target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01',
+  text: 'M4 7V5h16v2M9 19h6M12 5v14',
+  fire: 'M12 21c4 0 7-3 7-7 0-5-5-6-4-11-4 2-6 5-6 8-1-1-2-2-2-4-2 2-2 4-2 7 0 4 3 7 7 7z',
 }
 export const Icon = ({ n, s = 18 }) => (
   <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={P[n]} /></svg>
 )
+
+// Text with maths between $ signs, as the AI paper reader writes it.
+export function MathText({ text, style }) {
+  const parts = String(text ?? '').split(/(\$[^$\n]+\$)/)
+  return <span style={{ whiteSpace: 'pre-wrap', ...style }}>{parts.map((p, i) => p.length > 2 && p.startsWith('$') && p.endsWith('$')
+    ? <span key={i} dangerouslySetInnerHTML={{ __html: katex.renderToString(p.slice(1, -1), { throwOnError: false }) }} /> : <span key={i}>{p}</span>)}</span>
+}
+
+// A picture behind sign in. A plain img tag cannot send the sign in token.
+export function AuthImg({ src, alt = '', style, stamp }) {
+  const [url, setUrl] = useState(''); const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let live = true, made = ''
+    setUrl(''); setFailed(false)
+    fetch(src, { cache: 'no-store', headers: { Authorization: 'Bearer ' + auth.token } }).then(r => { if (!r.ok) throw new Error(); return r.blob() })
+      .then(b => { if (live) { made = URL.createObjectURL(b); setUrl(made) } }).catch(() => live && setFailed(true))
+    return () => { live = false; if (made) URL.revokeObjectURL(made) }
+  }, [src, stamp])
+  if (failed) return <div className="muted" style={{ padding: 12 }}>Picture not available</div>
+  return url ? <img src={url} alt={alt} style={{ maxWidth: '100%', display: 'block', ...style }} /> : <div className="muted" style={{ padding: 12 }}>Loading picture</div>
+}
+
+export function Dropzone({ file, onFile, accept, label, hint, small }) {
+  const input = useRef(); const [over, setOver] = useState(false)
+  return <div className={'dropzone' + (small ? ' small' : '') + (over ? ' over' : '') + (file ? ' has' : '')} role="button" tabIndex={0}
+    onClick={() => input.current.click()} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), input.current.click())}
+    onDragOver={e => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)}
+    onDrop={e => { e.preventDefault(); setOver(false); e.dataTransfer.files[0] && onFile(e.dataTransfer.files[0]) }}>
+    <Icon n="upload" s={small ? 16 : 26} />
+    <div><b>{file ? file.name : label}</b>{!small && <div className="muted">{file ? (file.size / 1048576).toFixed(1) + ' MB. Click to change.' : hint}</div>}</div>
+    {file && <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={e => { e.stopPropagation(); input.current.value = ''; onFile(null) }}>Remove</button>}
+    <input ref={input} type="file" accept={accept} hidden onChange={e => e.target.files[0] && onFile(e.target.files[0])} />
+  </div>
+}
+
+// A panel that slides up from the bottom on phones and sits in the middle on larger screens.
+export function Sheet({ title, onClose, children, footer }) {
+  useEffect(() => {
+    const k = e => e.key === 'Escape' && onClose()
+    addEventListener('keydown', k); const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'
+    return () => { removeEventListener('keydown', k); document.body.style.overflow = prev }
+  }, [])
+  return createPortal(<div className="sheet-wrap" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+    <div className="sheet" role="dialog" aria-modal="true" aria-label={title}><div className="grab" />
+      {title && <div className="sheet-h"><h2>{title}</h2><button className="btn ghost" style={{ marginLeft: 'auto' }} onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>}
+      {children}{footer && <div className="sheet-f">{footer}</div>}</div></div>, document.body)
+}
+
+// ask('Delete this?') -> Promise<boolean>, shown as a proper dialog instead of the browser's own pop-up.
+let askHandler = null
+export const ask = (text, opts = {}) => askHandler ? askHandler(text, opts) : Promise.resolve(window.confirm(text))
+export function ConfirmHost() {
+  const [q, setQ] = useState(null)
+  useEffect(() => { askHandler = (text, opts) => new Promise(res => setQ({ text, opts, res })); return () => { askHandler = null } }, [])
+  if (!q) return null
+  const done = v => { q.res(v); setQ(null) }
+  return <Modal title={q.opts.title || 'Please confirm'} onClose={() => done(false)} footer={<><button className="btn" onClick={() => done(false)}>{q.opts.no || 'Cancel'}</button>
+    <button className="btn primary" autoFocus onClick={() => done(true)}>{q.opts.yes || 'Confirm'}</button></>}><p style={{ margin: 0, lineHeight: 1.6 }}>{q.text}</p></Modal>
+}
+
+export function Ring({ value, max, size = 72, stroke = 7, children }) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, f = Math.min(1, max ? value / max : 0)
+  return <div className="ring" style={{ width: size, height: size }}><svg width={size} height={size} aria-hidden="true">
+    <circle cx={size / 2} cy={size / 2} r={r} stroke="var(--line)" strokeWidth={stroke} fill="none" />
+    <circle cx={size / 2} cy={size / 2} r={r} stroke={f >= 1 ? 'var(--ok)' : 'var(--red)'} strokeWidth={stroke} fill="none" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - f)} style={{ transition: 'stroke-dashoffset .6s' }} /></svg>
+    <div className="ring-in">{children}</div></div>
+}
+
+export function useNarrow(px = 900) {
+  const q = `(max-width:${px}px)`
+  const [n, setN] = useState(() => matchMedia(q).matches)
+  useEffect(() => { const m = matchMedia(q); const f = () => setN(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f) }, [q])
+  return n
+}
+
+export const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`
 
 const ToastCtx = createContext(() => {})
 export function ToastHost({ children }) {
@@ -42,7 +129,7 @@ export const useToast = () => useContext(ToastCtx)
 export function useLoad(path, deps = []) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const reload = useCallback(() => api(path).then(setData).catch(e => setError(e.message)), [path])
+  const reload = useCallback(() => path ? api(path).then(setData).catch(e => setError(e.message)) : Promise.resolve(), [path])
   useEffect(() => { reload() }, [reload, ...deps])
   return { data, error, reload, setData }
 }
@@ -69,9 +156,7 @@ export const Switch = ({ checked, onChange, label }) => (
 )
 
 const TONES = { active: 'ok', live: 'ok', done: 'ok', approved: 'info', in_review: 'warn', running: 'info', processing: 'info',
-  queued: '', upcoming: '', rejected: 'bad', pending: '', suspended: 'bad', failed: 'bad', retired: '', cancelled: '', inactive: '',
-  // a tone can also be passed straight through, which several screens already do
-  ok: 'ok', warn: 'warn', bad: 'bad', info: 'info' }
+  queued: '', upcoming: '', rejected: 'bad', pending: '', suspended: 'bad', failed: 'bad', retired: '', cancelled: '', inactive: '' }
 const LABELS = { in_review: 'In review', rejected: 'Sent back', live: 'Published' }
 export const Tag = ({ s, children }) => <span className={'tag ' + (TONES[s] ?? '')}>{children || LABELS[s] || (s ? s[0].toUpperCase() + s.slice(1) : '')}</span>
 

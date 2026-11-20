@@ -1,44 +1,36 @@
-# Two stages: build the web app with Node, then run everything on Python.
-# The backend serves the built frontend, so one service, one address.
+# EduVerse on Railway: one container, backend serves the built frontend.
 
+# ---- 1. build the React frontend ----
 FROM node:20-slim AS web
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci || npm install
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
+# ---- 2. Python backend + M1 + converter ----
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-FROM python:3.11-slim
-WORKDIR /app
-
-# opencv-python-headless still needs these two system libraries even though
-# "headless" means it has no GUI. Without them the import fails at runtime,
-# which is a confusing way to find out.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libglib2.0-0 libgomp1 \
+# libglib/libgl for OpenCV, LibreOffice is NOT installed (only needed for old .doc uploads)
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt \
-    && pip install --no-cache-dir "psycopg[binary]" gunicorn
+RUN pip install -r backend/requirements.txt
 
-# M1 and the converter are imported by the backend, so they travel with it
 COPY backend/ backend/
-COPY converter/ converter/
 COPY m1/ m1/
-# samples/ is deliberately NOT copied. It is a 14MB demo book used only by
-# `seed.py --demo`, which is guarded by `if sample.exists()`. Copying it would
-# fail the build for anyone whose checkout lacks the folder, and bloat the image.
-COPY --from=web /app/frontend/dist frontend/dist
+COPY converter/ converter/
+COPY --from=web /web/dist frontend/dist
 
-ENV PYTHONPATH=/app/m1:/app/converter \
-    FRONTEND_DIST=/app/frontend/dist \
-    STORAGE_DIR=/data/storage \
-    PYTHONUNBUFFERED=1
+# uploads and converted books; mount a Railway volume here so they survive redeploys
+ENV STORAGE_DIR=/data/storage
+RUN mkdir -p /data/storage
 
 WORKDIR /app/backend
-
-# Railway sets PORT. One worker on purpose: M1 holds a lock so only one book
-# converts at a time, and a second worker would have its own lock and break that.
-CMD ["sh","-c","python -m app.seed && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-keep-alive 65"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

@@ -4,23 +4,34 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 
 
-def _db_url() -> str:
-    """Railway, Render and Heroku all inject DATABASE_URL as `postgresql://...`
-    (Heroku still uses the older `postgres://`). SQLAlchemy reads a bare
-    `postgresql://` as psycopg2, which is NOT what this project installs — it
-    uses psycopg 3. Left alone, the first deploy dies on startup with
-    `ModuleNotFoundError: No module named 'psycopg2'`, which says nothing about
-    the real problem. So name the driver explicitly.
-    """
-    url = os.getenv("DATABASE_URL", "postgresql+psycopg://eduverse:eduverse@localhost:5432/eduverse")
-    for prefix in ("postgresql://", "postgres://"):
+def load_env(path: Path):
+    """backend/.env, so the sign-in key and API keys survive a restart. Real environment variables win."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip().strip('"').strip("'")
+        if v:
+            os.environ.setdefault(k.strip(), v)
+
+
+load_env(BASE / ".env")
+
+
+def _db_url(url: str) -> str:
+    """Railway and Heroku give postgres:// or postgresql:// URLs; SQLAlchemy would then look for
+    psycopg2, which is not installed. Point them at psycopg 3 instead."""
+    for prefix in ("postgres://", "postgresql://"):
         if url.startswith(prefix):
             return "postgresql+psycopg://" + url[len(prefix):]
     return url
 
 
 class Settings:
-    database_url = _db_url()
+    database_url = _db_url(os.getenv("DATABASE_URL", "postgresql+psycopg://eduverse:eduverse@localhost:5432/eduverse"))
     jwt_secret = os.getenv("JWT_SECRET", "change-me-in-production")
     jwt_hours = int(os.getenv("JWT_HOURS", "12"))
     storage_backend = os.getenv("STORAGE_BACKEND", "local")  # local | s3

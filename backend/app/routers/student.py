@@ -31,8 +31,12 @@ def feature(db, key):
 
 
 def book_card(b: Book, prog=None, how=None):
+    track = b.track or "textbook"
     return {"id": b.id, "title": b.title, "subject": b.subject, "board": b.board, "grade": b.grade, "medium": b.medium,
-            "edition": b.edition, "price": b.price, "status": b.status, "readable": b.status == "live" and bool(b.content_key),
+            "track": track, "level": b.level or "school", "exam": b.exam, "university": b.university, "course": b.course, "semester": b.semester,
+            "edition": b.edition, "price": b.price, "status": b.status, "content_type": b.content_type or "book",
+            "cover": f"/api/books/{b.id}/cover" if b.cover_key else "",
+            "readable": b.status == "live" and (track == "exam" or bool(b.content_key)),
             "owned": how, "progress": round(prog.percent) if prog else 0, "minutes": prog.minutes if prog else 0,
             "last_read": prog.last_read if prog else None, "position": prog.position if prog else {}}
 
@@ -71,27 +75,141 @@ def home(db: Session = Depends(get_db), me=Depends(student)):
     streak, d = 0, date.today()
     while days.get(d.isoformat()) and days[d.isoformat()].seconds > 0:
         streak += 1; d -= timedelta(days=1)
-    upcoming = db.query(Book).filter(Book.status == "upcoming", Book.grade == (me.klass.grade if me.klass else Book.grade)).limit(6).all() if feature(db, "upcoming_books") else []
-    return {"me": {"name": me.name, "school": me.school.name if me.school else "", "class": (f"Class {me.klass.grade}{(' ' + me.klass.section) if me.klass.section else ''}" if me.klass else ""),
-                   "board": me.school.board if me.school else "", "grade": me.klass.grade if me.klass else ""},
+    prof = me.profile or {}
+    grade = me.klass.grade if me.klass else prof.get("grade", "")
+    uq = db.query(Book).filter(Book.status == "upcoming")
+    if grade:
+        uq = uq.filter(Book.grade == grade)
+    upcoming = uq.limit(6).all() if feature(db, "upcoming_books") else []
+    return {"me": {"name": me.name, "school": me.school.name if me.school else "", "individual": not me.school_id,
+                   "class": (f"Class {me.klass.grade}{(' ' + me.klass.section) if me.klass.section else ''}" if me.klass else (f"Class {grade}" if grade else "")),
+                   "board": (me.school.board if me.school else prof.get("board", "")), "grade": grade, "profile": prof},
             "books": mine, "continue": next((b for b in mine if b["last_read"] and b["readable"]), None),
             "week": [{"day": k, "minutes": round((days[k].seconds if k in days else 0) / 60), "explanations": days[k].explanations if k in days else 0} for k in week],
             "streak": streak, "total_minutes": sum(p.minutes for p in prog.values()),
-            "upcoming": [book_card(b) for b in upcoming], "rules": rules_for(db, me), "store_on": feature(db, "student_store")}
+            "upcoming": [book_card(b) for b in upcoming], "rules": rules_for(db, me), "store_on": feature(db, "student_store"),
+            "goal_minutes": int(prof.get("goal_minutes") or 20), "exam_date": prof.get("exam_date") or "",
+            "today_minutes": round((days[date.today().isoformat()].seconds if date.today().isoformat() in days else 0) / 60),
+            "today_questions": _today_questions(db, me), "practice": weak_chapters(db, me), "last_exam": _last_exam(db, me, mine)}
+
+
+def _today_questions(db, me):
+    from ..models import QuestionProgress
+    start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return db.query(QuestionProgress).filter(QuestionProgress.user_id == me.id, QuestionProgress.updated >= start, QuestionProgress.status != "").count()
+
+
+def _last_exam(db, me, mine):
+    """The exam pack the student worked on most recently, for the Continue card."""
+    from ..models import QuestionProgress, MockAttempt
+    packs = {b["id"]: b for b in mine if b["track"] == "exam"}
+    if not packs:
+        return None
+    p = db.query(QuestionProgress).filter(QuestionProgress.user_id == me.id, QuestionProgress.book_id.in_(list(packs))).order_by(QuestionProgress.updated.desc()).first()
+    a = db.query(MockAttempt).filter(MockAttempt.user_id == me.id, MockAttempt.book_id.in_(list(packs))).order_by(MockAttempt.started_at.desc()).first()
+    when = [(x.updated, x.book_id) for x in [p] if x] + [(x.started_at, x.book_id) for x in [a] if x]
+    bid = max(when)[1] if when else next(iter(packs))
+    return {**packs[bid], "practised": db.query(QuestionProgress).filter(QuestionProgress.user_id == me.id, QuestionProgress.book_id == bid, QuestionProgress.status != "").count()}
+
+
+@router.get("/progress")
+def progress_page(db: Session = Depends(get_db), me=Depends(student)):
+    """Everything the Progress page shows: reading time, books, tests, and strong and weak chapters."""
+    from ..models import QuestionProgress, Question, MockAttempt
+    days = {r.day: r for r in db.query(StudentDay).filter(StudentDay.user_id == me.id, StudentDay.day >= (date.today() - timedelta(days=29)).isoformat())}
+    month = [(date.today() - timedelta(days=29 - i)).isoformat() for i in range(30)]
+    ids = owned_ids(db, me)
+    prog = {p.book_id: p for p in db.query(StudentProgress).filter(StudentProgress.user_id == me.id)}
+    books = [book_card(b, prog.get(b.id), ids[b.id]) for b in db.query(Book).filter(Book.id.in_(list(ids) or [0]), Book.status == "live")]
+    tests = db.query(MockAttempt).filter(MockAttempt.user_id == me.id, MockAttempt.submitted_at.isnot(None)).order_by(MockAttempt.submitted_at.desc()).limit(20).all()
+    rows = db.query(QuestionProgress, Question).join(Question, Question.id == QuestionProgress.question_id).filter(QuestionProgress.user_id == me.id).all()
+    from .exams import subject_of
+    chap, subj = {}, {}
+    for p, q in rows:
+        if p.status not in ("correct", "wrong"):
+            continue
+        for agg, k in ((chap, (p.book_id, q.chapter or "Not tagged")), (subj, subject_of(q.section))):
+            a = agg.setdefault(k, [0, 0]); a[0] += p.status == "correct"; a[1] += 1
+    titles = {b["id"]: b["title"] for b in books}
+    chapters = sorted([{"pack": titles.get(b, ""), "book_id": b, "chapter": c, "right": r, "tried": n, "accuracy": round(r / n * 100)} for (b, c), (r, n) in chap.items()],
+                      key=lambda x: (x["accuracy"], -x["tried"]))
+    streak, d = 0, date.today()
+    while days.get(d.isoformat()) and days[d.isoformat()].seconds > 0:
+        streak += 1; d -= timedelta(days=1)
+    return {"days": [{"day": k, "minutes": round((days[k].seconds if k in days else 0) / 60)} for k in month], "streak": streak,
+            "total_minutes": sum(p.minutes or 0 for p in prog.values()), "books": books,
+            "tests": [{"id": a.id, "title": a.title, "when": a.submitted_at, "score": a.score, "total": a.total, "pct": round(max(0, a.score) / a.total * 100) if a.total else None,
+                       "questions": len(a.question_ids), "time_taken": a.time_taken} for a in tests],
+            "chapters": chapters, "subjects": [{"subject": s, "right": r, "tried": n, "accuracy": round(r / n * 100)} for s, (r, n) in sorted(subj.items())],
+            "practised": sum(1 for p, _ in rows if p.status), "correct": sum(1 for p, _ in rows if p.status == "correct"), "saved": sum(1 for p, _ in rows if p.bookmarked)}
 
 
 @router.get("/store")
-def store(board: str = "", grade: str = "", db: Session = Depends(get_db), me=Depends(student)):
+def store(track: str = "textbook", level: str = "", board: str = "", grade: str = "", exam: str = "", university: str = "",
+          db: Session = Depends(get_db), me=Depends(student)):
+    """The store has two shelves. Textbooks: by board (CBSE, ICSE, each state) and class, or by university for degree.
+    Exam preparation: board exams, degree exams and competitive exams such as JEE and NEET."""
     if not feature(db, "student_store"):
         raise HTTPException(403, "The store is turned off")
+    if track == "exam" and not feature(db, "exam_track"):
+        raise HTTPException(403, "Exam preparation is turned off")
     ids = owned_ids(db, me)
-    q = db.query(Book).filter(Book.status.in_(("live", "upcoming")))
+    base = db.query(Book).filter(Book.status.in_(("live", "upcoming")))
+    base = base.filter(Book.track == track) if track == "exam" else base.filter((Book.track == "textbook") | (Book.track.is_(None)))
+    shelf = base.filter(Book.level == level) if level else base
+    def vals(col, q=shelf):
+        return sorted({v for (v,) in q.with_entities(col).distinct() if v})
+    q = shelf
     if board: q = q.filter(Book.board == board)
     if grade: q = q.filter(Book.grade == grade)
-    boards = sorted({b for (b,) in db.query(Book.board).filter(Book.status.in_(("live", "upcoming"))).distinct() if b})
-    grades = sorted({g for (g,) in db.query(Book.grade).filter(Book.status.in_(("live", "upcoming"))).distinct() if g}, key=lambda g: (not g.isdigit(), int(g) if g.isdigit() else 0, g))
-    return {"boards": boards, "grades": grades,
-            "books": [book_card(b, how=ids.get(b.id)) for b in q.order_by(Book.grade, Book.subject).all()]}
+    if exam: q = q.filter(Book.exam == exam)
+    if university: q = q.filter(Book.university == university)
+    grades = sorted(vals(Book.grade), key=lambda g: (not g.isdigit(), int(g) if g.isdigit() else 0, g))
+    return {"track": track, "levels": vals(Book.level, base), "boards": vals(Book.board), "grades": grades, "exams": vals(Book.exam),
+            "universities": vals(Book.university),
+            "books": [book_card(b, how=ids.get(b.id)) for b in q.order_by(Book.level, Book.board, Book.grade, Book.subject).all()]}
+
+
+class ProfileIn(BaseModel):
+    track: str | None = None
+    level: str | None = None
+    board: str | None = None
+    grade: str | None = None
+    exam: str | None = None
+    university: str | None = None
+    course: str | None = None
+    goal_minutes: int | None = None   # daily reading or practice goal
+    exam_date: str | None = None      # YYYY-MM-DD, for the countdown on Home
+
+
+@router.put("/profile")
+def set_profile(body: ProfileIn, db: Session = Depends(get_db), me=Depends(student)):
+    """What an individual learner is studying, their daily goal and exam date. Only the fields sent are changed."""
+    ch = body.model_dump(exclude_unset=True)
+    if "goal_minutes" in ch and ch["goal_minutes"] is not None and not 5 <= ch["goal_minutes"] <= 600:
+        raise HTTPException(422, "Pick a goal between 5 and 600 minutes")
+    if ch.get("exam_date"):
+        try:
+            date.fromisoformat(ch["exam_date"])
+        except ValueError:
+            raise HTTPException(422, "Exam date must look like 2027-01-24")
+    me.profile = {**(me.profile or {}), **{k: (v.strip() if isinstance(v, str) else v) for k, v in ch.items()}}
+    db.commit()
+    return me.profile
+
+
+def weak_chapters(db, me, limit=3):
+    """Chapters where this student's practice and test answers are weakest, from at least three tries."""
+    from ..models import QuestionProgress, Question
+    rows = db.query(QuestionProgress, Question).join(Question, Question.id == QuestionProgress.question_id) \
+        .filter(QuestionProgress.user_id == me.id, QuestionProgress.status.in_(("correct", "wrong"))).all()
+    agg = {}
+    for p, q in rows:
+        k = (p.book_id, q.chapter or "")
+        a = agg.setdefault(k, [0, 0]); a[0] += p.status == "correct"; a[1] += 1
+    titles = {b.id: b.title for b in db.query(Book).filter(Book.id.in_({k[0] for k in agg} or {0}))}
+    out = [{"book_id": b, "pack": titles.get(b, ""), "chapter": ch, "right": r, "tried": n, "accuracy": round(r / n * 100)} for (b, ch), (r, n) in agg.items() if n >= 3 and ch]
+    return sorted(out, key=lambda x: (x["accuracy"], -x["tried"]))[:limit]
 
 
 class BuyIn(BaseModel):
@@ -115,6 +233,8 @@ def readable_book(db, me, bid) -> Book:
     b = db.get(Book, bid)
     if not b or b.status != "live":
         raise HTTPException(404, "Book not available")
+    if b.track == "exam":
+        raise HTTPException(409, "This is an exam pack. Open it from My books.")
     if bid not in owned_ids(db, me):
         raise HTTPException(403, "Get this book from the store first")
     if not b.content_key:
@@ -127,7 +247,9 @@ def read_book(bid: int, db: Session = Depends(get_db), me=Depends(student)):
     b = readable_book(db, me, bid)
     data = C.load(b)
     p = db.get(StudentProgress, (me.id, bid))
-    return {"id": b.id, "title": b.title, "board": b.board, "grade": b.grade, "subject": b.subject, "book": data["book"], "toc": data["toc"],
+    packs = [x for x in db.query(Book).filter(Book.track == "exam", Book.status == "live") if bid in (x.linked_book_ids or [])]
+    return {"practice_packs": [{"id": x.id, "title": x.title, "owned": x.id in owned_ids(db, me)} for x in packs],
+            "id": b.id, "title": b.title, "board": b.board, "grade": b.grade, "subject": b.subject, "book": data["book"], "toc": data["toc"],
             "chapters": data["chapters"], "progress": {"percent": round(p.percent) if p else 0, "sections": p.sections if p else [], "position": p.position if p else {}},
             "rules": rules_for(db, me)}
 

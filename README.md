@@ -1,8 +1,18 @@
+> **v6:** textbooks and exam packs, individual sign up (B2C), organisations (B2B). See TRACKS.md.
+
 # EduVerse: Super Admin, School Admin, Reviewer and Student
 
 FastAPI + PostgreSQL backend, React (Vite) frontend, zPROx theme.
 
-## Run
+## Run on Windows
+```
+powershell -ExecutionPolicy Bypass -File run.ps1    # http://localhost:8001
+```
+`run.ps1` creates `backend/.env` on first run and keeps one permanent `JWT_SECRET` in it, so restarts do not sign anyone out.
+Set up once: `python -m venv .venv`, `.venv\Scripts\pip install --use-feature=truststore -r backend\requirements.txt`, then build the frontend.
+The OpenAI key goes in Super Admin, AI settings, or as `OPENAI_API_KEY` in `backend/.env`.
+
+## Run by hand
 ```
 # backend
 cd backend

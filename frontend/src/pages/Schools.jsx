@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { api, inr, num, day } from '../api'
 import { useLoad, Page, Modal, Field, Tag, useToast, useForm, Icon, Confirm } from '../ui'
 
-const BOARDS = ['Tamil Nadu State Board', 'CBSE', 'ICSE', 'Kerala State Board', 'Karnataka State Board', 'Andhra Pradesh State Board', 'Telangana State Board', 'Maharashtra State Board']
-const blank = { name: '', board: BOARDS[0], medium: 'English', city: '', contact_name: '', contact_email: '', academic_year: '', plan_id: '', seats: 0, discount_id: '', status: 'active' }
+const BOARDS = ['Tamil Nadu State Board', 'CBSE', 'ICSE', 'Kerala State Board', 'Karnataka State Board', 'Andhra Pradesh State Board', 'Telangana State Board', 'Maharashtra State Board', 'Not applicable']
+const KINDS = { school: 'School', college: 'Degree college', coaching: 'Coaching centre', other: 'Other' }
+const blank = { name: '', kind: 'school', board: BOARDS[0], medium: 'English', city: '', contact_name: '', contact_email: '', academic_year: '', plan_id: '', seats: 0, discount_id: '', status: 'active' }
 
 function SchoolForm({ school, plans, discounts, onClose, onSaved }) {
   const [v, , bind] = useForm(school ? { ...school, plan_id: school.plan_id ?? '', discount_id: school.discount_id ?? '' } : blank)
@@ -13,13 +14,14 @@ function SchoolForm({ school, plans, discounts, onClose, onSaved }) {
   async function save() {
     setErr('')
     const body = { ...v, seats: +v.seats || 0, plan_id: v.plan_id ? +v.plan_id : null, discount_id: v.discount_id ? +v.discount_id : null }
-    try { await api(school ? '/api/schools/' + school.id : '/api/schools', { method: school ? 'PUT' : 'POST', body }); onSaved(school ? 'School updated' : 'School added') }
+    try { await api(school ? '/api/schools/' + school.id : '/api/schools', { method: school ? 'PUT' : 'POST', body }); onSaved(school ? 'Organisation updated' : 'Organisation added') }
     catch (e) { setErr(e.message) }
   }
   return (
-    <Modal title={school ? 'Edit school' : 'Add school'} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>{school ? 'Save changes' : 'Add school'}</button></>}>
+    <Modal title={school ? 'Edit organisation' : 'Add organisation'} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>{school ? 'Save changes' : 'Add organisation'}</button></>}>
       {err && <div className="err">{err}</div>}
-      <Field label="School name"><input className="input" {...bind('name')} /></Field>
+      <Field label="Name"><input className="input" {...bind('name')} /></Field>
+      <Field label="Type" hint="B2B buyer. Individual learners sign up and buy on their own, without an organisation."><select className="input" {...bind('kind')}>{Object.entries(KINDS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
       <div className="grid2">
         <Field label="Board"><select className="input" {...bind('board')}>{BOARDS.map(b => <option key={b}>{b}</option>)}</select></Field>
         <Field label="Medium"><select className="input" {...bind('medium')}>{['English', 'Tamil', 'Hindi', 'Malayalam', 'Kannada', 'Telugu'].map(m => <option key={m}>{m}</option>)}</select></Field>
@@ -42,23 +44,23 @@ export default function Schools() {
   const [edit, setEdit] = useState(null); const [del, setDel] = useState(null)
   const toast = useToast()
   return (
-    <Page title="Schools" sub="Every school onboarded to EduVerse, its plan and seat use"
-      actions={<button className="btn primary" onClick={() => setEdit({})}><Icon n="plus" s={16} />Add school</button>}>
+    <Page title="Organisations" sub="Schools, colleges and coaching centres buying seats (B2B). Optional: individual learners buy on their own."
+      actions={<button className="btn primary" onClick={() => setEdit({})}><Icon n="plus" s={16} />Add organisation</button>}>
       <div className="card">
-        <table className="t"><thead><tr><th>School</th><th>Board</th><th>Plan</th><th>Seat use</th><th className="num">Annual value</th><th>Status</th><th /></tr></thead>
+        <table className="t"><thead><tr><th>Organisation</th><th>Board</th><th>Plan</th><th>Seat use</th><th className="num">Annual value</th><th>Status</th><th /></tr></thead>
           <tbody>{data?.map(s => (
             <tr key={s.id}>
-              <td><b>{s.name}</b><div className="muted">{s.city}{s.academic_year ? ', ' + s.academic_year : ''}. Since {day(s.created_at)}</div></td>
+              <td><b>{s.name}</b><div className="muted">{{ school: 'School', college: 'Degree college', coaching: 'Coaching centre', other: 'Other' }[s.kind] || 'School'}, {s.city}{s.academic_year ? ', ' + s.academic_year : ''}. Since {day(s.created_at)}</div></td>
               <td>{s.board}<div className="muted">{s.medium} medium</div></td>
               <td>{s.plan || <span className="muted">None</span>}{s.discount && <div className="muted">{s.discount}</div>}</td>
               <td style={{ minWidth: 150 }}><div className="bar-track"><i style={{ width: Math.min(100, s.students / Math.max(1, s.seats) * 100) + '%' }} /></div><div className="muted">{num(s.students)} of {num(s.seats)} seats</div></td>
               <td className="num">{inr(s.annual_value)}</td><td><Tag s={s.status} /></td>
               <td className="acts"><button className="btn ghost sm" onClick={() => setEdit(s)}>Edit</button><button className="btn ghost sm" style={{ color: 'var(--red)' }} onClick={() => setDel(s)}>Delete</button></td>
             </tr>))}</tbody></table>
-        {data && !data.length && <div className="empty">No schools yet. Add the first school to start selling seats.</div>}
+        {data && !data.length && <div className="empty">No organisations yet. Add one to sell seats.</div>}
       </div>
       {edit && plans && discounts && <SchoolForm school={edit.id ? edit : null} plans={plans} discounts={discounts} onClose={() => setEdit(null)} onSaved={m => { setEdit(null); toast(m); reload() }} />}
-      {del && <Confirm text={`Delete ${del.name}? This only works when it has no admins or students.`} yes="Delete school" onClose={() => setDel(null)}
+      {del && <Confirm text={`Delete ${del.name}? This only works when it has no admins or students.`} yes="Delete organisation" onClose={() => setDel(null)}
         onYes={async () => { try { await api('/api/schools/' + del.id, { method: 'DELETE' }); toast('School deleted'); reload() } catch (e) { toast(e.message, true) } setDel(null) }} />}
     </Page>
   )

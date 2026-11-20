@@ -1,8 +1,13 @@
-**/__pycache__
-**/*.pyc
-**/node_modules
-**/.venv
-**/dist
+# Never upload secrets, local databases or local data to Railway
+**/.env
 **/*.db
-backend/data
-.git
+**/*.sqlite*
+backend/backups/
+backend/data/
+**/node_modules/
+frontend/dist/
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+m1/tests/

@@ -71,9 +71,9 @@ def read(path):
             style = _style(el)
             text, bold = _runs(el)
             m = re.fullmatch(r"\s*Page\s+(\d+)\s*", text or "")
-            # M1 writes this style as "EV Note"; some documents report it
-            # without the space. Accept both, or every page marker is missed
-            # and every block ends up on page 0.
+            # Page marker style. Matched with spaces ignored so "EV Note" and
+            # "EVNote" both count. (This was not the cause of the reviewer
+            # hang; see PIPELINE_FIX.md. It is kept as a harmless guard.)
             if m and (style or "").replace(" ", "") == "EVNote":
                 page = int(m.group(1)); continue
             drawings = []

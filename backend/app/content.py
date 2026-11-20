@@ -50,6 +50,11 @@ def ingest_flow(db: Session, book: Book, flow_bytes: bytes, log=lambda *a: None)
         src = Path(tmp) / "flow.docx"; src.write_bytes(flow_bytes)
         out = Path(tmp) / "out"
         data, report = convert(src, out, log=log)
+        if not page_numbers(data):
+            # Nothing a reviewer could open. Fail the job with a reason rather
+            # than hand over a book with no pages.
+            raise ValueError("The converter found no readable content in this flow document, so there are no pages to review. "
+                             "Check that M1 finished and that the right file was uploaded.")
         for f in out.rglob("*"):
             rel = f.relative_to(out).as_posix()
             if f.is_file() and not rel.startswith("assets"):

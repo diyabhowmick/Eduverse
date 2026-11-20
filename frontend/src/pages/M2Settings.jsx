@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { useLoad, Page, Field, Switch, useToast } from '../ui'
+import { useLoad, Page, Field, Switch, useToast, ask } from '../ui'
 
 const PROV = [['openai', 'OpenAI', 'gpt-image-1, dall-e-3'], ['gemini', 'Google Gemini', 'Imagen 4, Gemini image models'], ['local', 'Local', 'Stable Diffusion WebUI or Forge on your server']]
 const KINDS = ['photo', 'diagram', 'chart', 'map']
@@ -16,7 +16,7 @@ export default function M2Settings() {
   const toggle = (k, kind) => set(k, v[k].includes(kind) ? v[k].filter(x => x !== kind) : [...v[k], kind])
   const dirty = JSON.stringify(v) !== JSON.stringify(data.values)
   const save = async () => { try { setData(await api('/api/pipeline/m2', { method: 'PUT', body: v })); toast('M2 settings saved') } catch (e) { toast(e.message, true) } }
-  const reset = async () => { if (!confirm('Put every M2 setting back to default? Saved API keys are kept.')) return; try { setData(await api('/api/pipeline/m2/reset', { method: 'POST' })); toast('M2 settings back to default') } catch (e) { toast(e.message, true) } }
+  const reset = async () => { if (!(await ask('Put every M2 setting back to default? Saved API keys are kept.', { yes: 'Reset' }))) return; try { setData(await api('/api/pipeline/m2/reset', { method: 'POST' })); toast('M2 settings back to default') } catch (e) { toast(e.message, true) } }
   const runTest = async () => { if (dirty) return toast('Save first, then test', true); setBusy(true); setTest(null); try { setTest(await api('/api/pipeline/m2/test', { method: 'POST' })) } catch (e) { setTest({ ok: false, error: e.message }) } setBusy(false) }
   return (
     <Page title="Figure redraw (M2)" sub="After conversion, every figure is drawn again from its description. The original is always kept and the reviewer picks which one students see."
@@ -44,8 +44,8 @@ export default function M2Settings() {
             <div className="grid3">
               <Field label="Model" hint={v.provider === 'local' ? 'Checkpoint name, empty for the one loaded' : ''}><input className="input" value={p.model} onChange={e => setP('model', e.target.value)} /></Field>
               <Field label="Address"><input className="input" value={p.base_url} onChange={e => setP('base_url', e.target.value)} /></Field>
-              <Field label="API key" hint={saved.api_key === 'saved' ? 'A key is saved. Type to replace it.' : v.provider === 'local' ? 'Only if your server asks for one' : 'Stored on the server, never shown again'}>
-                <input className="input" type="password" placeholder={saved.api_key === 'saved' ? 'Saved' : 'Paste key'} value={p.api_key === 'saved' ? '' : p.api_key} onChange={e => setP('api_key', e.target.value || (saved.api_key === 'saved' ? 'saved' : ''))} /></Field>
+              <Field label="API key" hint={saved.api_key === 'saved' ? 'A key is saved. Type to replace it.' : (data.env || []).includes(v.provider) ? 'Using the key set on the server (' + (v.provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY') + '). Leave empty to keep using it.' : v.provider === 'local' ? 'Only if your server asks for one' : 'Stored on the server, never shown again'}>
+                <input className="input" type="password" placeholder={saved.api_key === 'saved' ? 'Saved' : (data.env || []).includes(v.provider) ? 'Set on the server' : 'Paste key'} value={p.api_key === 'saved' ? '' : p.api_key} onChange={e => setP('api_key', e.target.value || (saved.api_key === 'saved' ? 'saved' : ''))} /></Field>
               {v.provider === 'openai' && <Field label="Quality" hint="gpt-image-1 only"><select className="input" value={p.quality || 'medium'} onChange={e => setP('quality', e.target.value)}>{['low', 'medium', 'high', 'auto'].map(q => <option key={q}>{q}</option>)}</select></Field>}
               {v.provider === 'local' && <Field label="Steps"><input className="input" type="number" min="1" value={p.steps || 25} onChange={e => setP('steps', +e.target.value)} /></Field>}
               <Field label="Size" hint="auto follows the shape of the original"><input className="input" value={v.size} onChange={e => set('size', e.target.value)} /></Field>

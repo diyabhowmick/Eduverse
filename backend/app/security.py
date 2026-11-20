@@ -48,6 +48,3 @@ def require(*roles):
 
 
 super_admin = require("super_admin")
-# Runs the factory — books, jobs, reviewers, models, cost. Never sees what a
-# school pays. Super Admin can do everything a Platform Admin can.
-platform_admin = require("super_admin", "platform_admin")

@@ -46,23 +46,11 @@ class School(Base):
     academic_year: Mapped[str] = mapped_column(String(20), default="")
     plan_id: Mapped[int | None] = mapped_column(ForeignKey("plans.id"), nullable=True)
     seats: Mapped[int] = mapped_column(Integer, default=0)
-    # A plan with no end date cannot be renewed, because nothing knows it is
-    # ending. This was the easiest money in the product to lose.
-    plan_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    plan_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    price_per_seat: Mapped[float] = mapped_column(Float, default=0)
-    contact_phone: Mapped[str] = mapped_column(String(40), default="")
-    is_test: Mapped[bool] = mapped_column(Boolean, default=False)   # kept out of every total
-    # A school buys a pool of questions a month, but each student draws only a
-    # slice of it — otherwise the keenest reader in the class finishes the
-    # whole allowance by Tuesday.
-    ask_pool: Mapped[int] = mapped_column(Integer, default=5000)
-    ask_pool_used: Mapped[int] = mapped_column(Integer, default=0)
-    ask_per_student_day: Mapped[int] = mapped_column(Integer, default=10)
     discount_id: Mapped[int | None] = mapped_column(ForeignKey("discounts.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | suspended
     logo: Mapped[str] = mapped_column(Text, default="")  # data URL, set by the school admin
     rules: Mapped[dict] = mapped_column(JSON, default=dict)  # allowed depths, exam windows
+    kind: Mapped[str] = mapped_column(String(20), default="school")  # school | college | coaching | other (B2B buyer type)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     plan = relationship("Plan")
     discount = relationship("Discount")
@@ -80,6 +68,10 @@ class User(Base):
     phone: Mapped[str] = mapped_column(String(30), default="")
     class_id: Mapped[int | None] = mapped_column(ForeignKey("classes.id"), nullable=True)
     roll_no: Mapped[str] = mapped_column(String(40), default="")
+    # Individual (B2C) learners have no organisation; they keep what they are studying here
+    # so the store opens on the right shelf: {"track", "level", "board", "grade", "exam", "university", "course"}
+    profile: Mapped[dict] = mapped_column(JSON, default=dict)
+    signup: Mapped[str] = mapped_column(String(20), default="")  # "" = created by an organisation | self = signed up on their own
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     school = relationship("School")
@@ -167,20 +159,7 @@ class Book(Base):
     pages: Mapped[int] = mapped_column(Integer, default=0)
     price: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(20), default="processing")  # upcoming | processing | in_review | rejected | live | retired
-    fingerprint: Mapped[str] = mapped_column(String(80), default="", index=True)
-    # A hash of the uploaded FILE. Kept apart from `fingerprint`, which the
-    # converter overwrites with a hash of the text — both are useful, but only
-    # this one answers "have we been given this exact file before".
-    file_sha: Mapped[str] = mapped_column(String(80), default="", index=True)
-    # What this book cost to produce, and how. A book is paid for once and
-    # read by every school on that syllabus, so cost per school is the number
-    # that matters — and it needs these to be worked out.
-    cost_usd: Mapped[float] = mapped_column(Float, default=0)
-    route_native: Mapped[int] = mapped_column(Integer, default=0)
-    route_scanned: Mapped[int] = mapped_column(Integer, default=0)
-    figures_n: Mapped[int] = mapped_column(Integer, default=0)
-    split_by: Mapped[str] = mapped_column(String(20), default="")   # sections | headings | pages
-    headings_n: Mapped[int] = mapped_column(Integer, default=0)
+    fingerprint: Mapped[str] = mapped_column(String(80), default="")
     content_key: Mapped[str] = mapped_column(String(300), default="")   # storage folder of the converted book (book.json, images/)
     original_key: Mapped[str] = mapped_column(String(400), default="")  # storage key of the uploaded original
     flow_key: Mapped[str] = mapped_column(String(400), default="")      # storage key of the M1 flow document
@@ -192,6 +171,90 @@ class Book(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     live_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Product line. textbook = a digitised book. exam = an exam pack (past papers, recap, mock tests).
+    track: Mapped[str] = mapped_column(String(20), default="textbook")
+    level: Mapped[str] = mapped_column(String(20), default="school")   # school | degree | competitive
+    exam: Mapped[str] = mapped_column(String(80), default="")          # exam packs: "Class 10 Board", "NEET UG", "Semester exam"
+    university: Mapped[str] = mapped_column(String(160), default="")   # degree level
+    course: Mapped[str] = mapped_column(String(120), default="")       # degree level, e.g. B.Sc Physics
+    semester: Mapped[str] = mapped_column(String(20), default="")      # degree level
+    linked_book_ids: Mapped[list] = mapped_column(JSON, default=list)  # exam packs: textbooks its questions are tagged against
+    content_type: Mapped[str] = mapped_column(String(20), default="book")  # book | document | exam
+    cover_key: Mapped[str] = mapped_column(String(400), default="")        # uploaded cover image, if any
+
+
+class QuestionPaper(Base):
+    """One past paper inside an exam pack."""
+    __tablename__ = "question_papers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    year: Mapped[int] = mapped_column(Integer)
+    session: Mapped[str] = mapped_column(String(60), default="")       # March, Supplementary, Shift 1
+    title: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="draft")   # draft | in_review | approved | rejected
+    source_key: Mapped[str] = mapped_column(String(400), default="")
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # AI reading and answering, run in a separate process
+    ai_status: Mapped[str] = mapped_column(String(20), default="")     # "" | queued | running | done | failed
+    ai_stage: Mapped[str] = mapped_column(String(40), default="")
+    ai_done: Mapped[int] = mapped_column(Integer, default=0)
+    ai_total: Mapped[int] = mapped_column(Integer, default=0)
+    ai_error: Mapped[str] = mapped_column(Text, default="")
+
+
+class Question(Base):
+    __tablename__ = "questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    paper_id: Mapped[int] = mapped_column(ForeignKey("question_papers.id"), index=True)
+    number: Mapped[str] = mapped_column(String(20), default="")
+    section: Mapped[str] = mapped_column(String(60), default="")
+    text: Mapped[str] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON, default=list)          # [{"key": "a", "text": "..."}] for MCQs
+    answer: Mapped[str] = mapped_column(Text, default="")              # option key for MCQs, else short answer
+    solution: Mapped[str] = mapped_column(Text, default="")
+    marks: Mapped[float] = mapped_column(Float, default=0)
+    chapter: Mapped[str] = mapped_column(String(200), default="")      # chapter of a linked textbook
+    chapter_ref: Mapped[dict] = mapped_column(JSON, default=dict)      # {"book_id", "chapter"} to jump to the reader
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    qtype: Mapped[str] = mapped_column(String(20), default="")         # mcq | multi | numeric | written
+    answer_source: Mapped[str] = mapped_column(String(20), default="") # paper | key | ai | human
+    confidence: Mapped[str] = mapped_column(String(10), default="")    # high | medium | low, for AI answers
+    page: Mapped[int] = mapped_column(Integer, default=0)              # page of the original paper, from 1
+    figure_key: Mapped[str] = mapped_column(String(400), default="")   # picture cropped from the original page
+
+
+class MockAttempt(Base):
+    __tablename__ = "mock_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    question_ids: Mapped[list] = mapped_column(JSON, default=list)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    score: Mapped[float] = mapped_column(Float, default=0)
+    total: Mapped[float] = mapped_column(Float, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    paper_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    minutes: Mapped[int] = mapped_column(Integer, default=0)            # 0 = no time limit
+    mark_correct: Mapped[float] = mapped_column(Float, default=0)       # 0 = each question's own marks
+    mark_wrong: Mapped[float] = mapped_column(Float, default=0)         # taken off for a wrong answer
+    time_taken: Mapped[int] = mapped_column(Integer, default=0)         # seconds
+    times: Mapped[dict] = mapped_column(JSON, default=dict)             # seconds spent on each question
+
+
+class QuestionProgress(Base):
+    """What one student has done with one question: tried it, got it right or wrong, saved it for revision."""
+    __tablename__ = "question_progress"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    status: Mapped[str] = mapped_column(String(10), default="")          # "" | correct | wrong
+    bookmarked: Mapped[bool] = mapped_column(Boolean, default=False)
+    tries: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class Job(Base):
@@ -211,6 +274,7 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     kind: Mapped[str] = mapped_column(String(10), default="")  # book (printed book, runs M1) | flow (M1 output, convert only)
     extras_key: Mapped[str] = mapped_column(String(400), default="")  # M1 report, ledger and settings used
+    note: Mapped[str] = mapped_column(Text, default="")  # warning on a job that still finished, e.g. book split by page
     book = relationship("Book")
 
 
@@ -229,27 +293,6 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
-
-
-class AskLog(Base):
-    """Every question a student types, and whether it cost anything.
-
-    Tapping a word is free, because that answer was written during review. This
-    is the one place a model runs while somebody waits, so it is capped per
-    student per day and every refusal is recorded — a refused question must not
-    count against the quota, or students spend it testing the boundary.
-    """
-    __tablename__ = "ask_log"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), index=True)
-    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
-    section: Mapped[str] = mapped_column(String(20), default="")
-    question: Mapped[str] = mapped_column(Text, default="")
-    answered: Mapped[bool] = mapped_column(Boolean, default=False)
-    refused_why: Mapped[str] = mapped_column(String(40), default="")  # off_topic | over_cap | pool_empty
-    tokens: Mapped[int] = mapped_column(Integer, default=0)
-    at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
 
 class UsageEvent(Base):
@@ -275,3 +318,75 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String(40))
     target_id: Mapped[str] = mapped_column(String(40), default="")
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Explanation(Base):
+    """A saved explanation, shared by every student who asks the same thing in the same place.
+    anchor names the place: a keyword in a chapter of one version of a book, a passage, an exam question,
+    or a phrase inside another explanation (level 2). Several candidates can share an anchor and style;
+    votes decide which one becomes final."""
+    __tablename__ = "explanations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20))                       # book | question
+    anchor: Mapped[str] = mapped_column(String(400), index=True)
+    level: Mapped[int] = mapped_column(Integer, default=1)               # 1 = the word tapped, 2 = a phrase inside that answer
+    style: Mapped[str] = mapped_column(String(30), default="concept_clarity")
+    lang: Mapped[str] = mapped_column(String(20), default="English")
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("explanations.id"), nullable=True, index=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    question_id: Mapped[int | None] = mapped_column(ForeignKey("questions.id"), nullable=True, index=True)
+    term: Mapped[str] = mapped_column(String(200), default="")
+    text: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(80), default="")
+    source: Mapped[str] = mapped_column(String(20), default="live")      # live | prepared | edited
+    status: Mapped[str] = mapped_column(String(20), default="candidate") # candidate | final | retired | flagged
+    shown: Mapped[int] = mapped_column(Integer, default=0)
+    helpful: Mapped[int] = mapped_column(Integer, default=0)
+    unhelpful: Mapped[int] = mapped_column(Integer, default=0)
+    retries: Mapped[int] = mapped_column(Integer, default=0)            # "Explain differently" pressed on it
+    reports: Mapped[int] = mapped_column(Integer, default=0)
+    decided_by: Mapped[str] = mapped_column(String(160), default="")    # "votes" or the reviewer who chose it
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ExplanationVote(Base):
+    __tablename__ = "explanation_votes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    explanation_id: Mapped[int] = mapped_column(ForeignKey("explanations.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    value: Mapped[str] = mapped_column(String(10))                       # up | down | report
+    note: Mapped[str] = mapped_column(Text, default="")
+    at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class AiUsage(Base):
+    """Every model request and every saved explanation served, for the cost dashboard and the confusion map."""
+    __tablename__ = "ai_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    kind: Mapped[str] = mapped_column(String(30), index=True)            # explain | explain_deep | prepare | paper_read | paper_answers | recap
+    model: Mapped[str] = mapped_column(String(80), default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached: Mapped[bool] = mapped_column(Boolean, default=False)         # served from a saved explanation, no model call
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    term: Mapped[str] = mapped_column(String(200), default="")
+    where: Mapped[str] = mapped_column(String(200), default="")          # chapter or question, in words
+
+
+class PrepJob(Base):
+    """Writing explanations ahead of students, for one book or exam pack."""
+    __tablename__ = "prep_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    styles: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="queued")    # queued | running | done | failed
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default="")
+    started_by: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

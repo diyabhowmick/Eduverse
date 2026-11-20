@@ -3,6 +3,19 @@ import { Link, useParams } from 'react-router-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { api } from '../../api'
+import ExplainPanel from '../../ExplainPanel'
+import { Sheet, Icon, useNarrow } from '../../ui'
+
+const SIZES = [['15.5px', 'Small'], ['17.5px', 'Medium'], ['19.5px', 'Large'], ['22px', 'Extra large']]
+const LEADS = [['1.6', 'Close'], ['1.8', 'Normal'], ['2.05', 'Loose']]
+const THEMES = [['', 'Light'], ['warm', 'Warm paper'], ['night', 'Night']]
+const loadLook = () => { try { return { size: '17.5px', lead: '1.8', theme: '', ...JSON.parse(localStorage.getItem('ev_reader') || '{}') } } catch { return { size: '17.5px', lead: '1.8', theme: '' } } }
+
+function LookSheet({ look, set, onClose }) {
+  const row = (label, opts, k) => <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>{label}</div>
+    <div className="seg">{opts.map(([v, l]) => <button key={v} type="button" className={look[k] === v ? 'on' : ''} onClick={() => set({ ...look, [k]: v })}>{l}</button>)}</div></div>
+  return <Sheet title="Reading comfort" onClose={onClose}><div className="rset">{row('Text size', SIZES, 'size')}{row('Line spacing', LEADS, 'lead')}{row('Page colour', THEMES, 'theme')}</div></Sheet>
+}
 
 const tex = l => { try { return katex.renderToString(l, { displayMode: true, throwOnError: false }) } catch { return l } }
 const scrollToSec = (page, id) => { const el = page?.querySelector(`[data-sec="${id}"]`); if (el) page.scrollTop += el.getBoundingClientRect().top - page.getBoundingClientRect().top - 12 }
@@ -41,15 +54,12 @@ export default function Reader() {
   const { id } = useParams()
   const [bk, setBk] = useState(null); const [err, setErr] = useState('')
   const [chNo, setChNo] = useState(null); const [cur, setCur] = useState(null)
-  const [sel, setSel] = useState(null); const [depth, setDepth] = useState(null)
-  // Tapping a word is free — that answer was written while the book was with a
-  // reviewer. Asking your own question is the one thing that costs something
-  // every time, so it is capped per student per day and the count is shown.
-  const [q, setQ] = useState(''); const [asked, setAsked] = useState([])
-  const [quota, setQuota] = useState(null); const [asking, setAsking] = useState(false)
-  const [ans, setAns] = useState({}); const [selBtn, setSelBtn] = useState(null)
+  const [sel, setSel] = useState(null); const [selBtn, setSelBtn] = useState(null)
+  const [look, setLookState] = useState(loadLook); const [lookOpen, setLookOpen] = useState(false)
+  const setLook = l => { setLookState(l); localStorage.setItem('ev_reader', JSON.stringify(l)) }
+  const narrow = useNarrow(1000)
   const pageRef = useRef(); const lastPing = useRef(Date.now()); const curRef = useRef(null)
-  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); setChNo(b.progress.position?.chapter || b.chapters[0]?.number); setDepth(b.rules.allowed_depths.includes('concept_clarity') ? 'concept_clarity' : b.rules.allowed_depths[0]) }).catch(e => setErr(e.message)) }, [id])
+  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); setChNo(b.progress.position?.chapter || b.chapters[0]?.number) }).catch(e => setErr(e.message)) }, [id])
   const ch = useMemo(() => bk?.chapters.find(c => c.number === chNo), [bk, chNo])
   const kws = useMemo(() => Object.fromEntries((ch?.keywords || []).map(k => [k.id, k])), [ch])
   // progress: on topic change and every 30 seconds while reading
@@ -74,51 +84,26 @@ export default function Reader() {
     if (s !== curRef.current) { curRef.current = s; setCur(s); ping(s) }
     setSelBtn(null)
   }
-  useEffect(() => { api('/api/ask/quota').then(setQuota).catch(() => {}) }, [])
-
-  async function ask() {
-    const text = q.trim()
-    if (!text || asking) return
-    setAsking(true)
-    try {
-      const para = document.querySelector('.spage .inner p')?.textContent || ''
-      const r = await api('/api/ask', { method: 'POST', body: {
-        book_id: +id, section: ch?.number ? String(ch.number) : '', passage: para, question: text } })
-      setAsked(x => [...x, { q: text, a: r.answer, counted: r.counted }])
-      setQuota({ used_today: r.used_today, cap: r.cap, left: r.left,
-                 pool_left: r.pool_left, pool_total: r.pool_total })
-      setQ('')
-    } catch (e) {
-      setAsked(x => [...x, { q: text, a: e.message, counted: false }])
-    } finally { setAsking(false) }
-  }
-
-  async function explain(term, paragraph, definition, figs, d = depth) {
-    const key = term + '|' + d
-    setSel({ term, paragraph, definition, figs, key }); if (ans[key]?.text) return
-    setAns(a => ({ ...a, [key]: { loading: true } }))
-    try {
-      const r = await api('/api/explain', { method: 'POST', body: { term, paragraph, definition, figures: figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')), depth: d, chapter: ch.title, book_id: +id, book: { class: bk.grade, subject: bk.subject, board: bk.board } } })
-      setAns(a => ({ ...a, [key]: { text: r.text, meta: `${r.provider} ${r.model}` } }))
-    } catch (e) { setAns(a => ({ ...a, [key]: { error: e.message } })) }
+  function explain(term, paragraph, definition, figs, keyword_id, block_id) {
+    setSel({ term, paragraph, definition, figs, keyword_id, block_id, key: [ch.number, keyword_id, block_id, term].join('|') })
   }
   function onWord(kid, el) {
     const k = kws[kid]; if (!k) return
     document.querySelectorAll('.kw.sel').forEach(x => x.classList.remove('sel')); el.classList.add('sel')
     const figs = figuresOf(ch).filter(f => ((f.caption || '') + ' ' + (f.desc?.summary || '')).toLowerCase().includes(k.key)).slice(0, 2)
-    explain(k.term, el.closest('p,li')?.textContent || '', k.definition || '', figs)
+    explain(k.term, el.closest('p,li')?.textContent || '', k.definition || '', figs, String(kid), el.closest('[id]')?.id || '')
   }
   function onMouseUp() {
     setTimeout(() => {
       const s = getSelection(); const t = s.toString().trim()
       if (!t || t.length < 2 || t.length > 60 || t.split(/\s+/).length > 6) return setSelBtn(null)
       const r = s.getRangeAt(0).getBoundingClientRect()
-      setSelBtn({ t, x: r.left, y: r.bottom + 6, para: s.anchorNode?.parentElement?.closest('p,li')?.textContent || '' })
+      const host = s.anchorNode?.parentElement
+      setSelBtn({ t, x: r.left, y: r.bottom + 6, para: host?.closest('p,li')?.textContent || '', block: host?.closest('[id]')?.id || '' })
     }, 0)
   }
   if (err) return <div className="page"><div className="card empty">{err} <Link to="/student">Back to home</Link></div></div>
   if (!bk || !ch) return <div className="page"><div className="empty">Opening your book</div></div>
-  const a = sel && ans[sel.key]
   const tail = s => !s.number && !s.id.endsWith('-intro')
   const secs = ch.sections.filter(s => !s.id.endsWith('-intro') || ch.blocks.some(b => b.section === s.id))
   let sepShown = false
@@ -132,11 +117,19 @@ export default function Reader() {
           <a className={'l' + s.level + (cur === s.id ? ' cur' : '') + (bk.progress.sections.includes(s.id) ? ' done' : '')} onClick={() => scrollToSec(pageRef.current, s.id)}>
             {s.number && <span className="num">{s.number}</span>}{s.title}</a></div> })}</div>
       </nav>
-      <article className="spage" ref={pageRef} onScroll={onScroll} onMouseUp={onMouseUp}>
+      <article className={'spage ' + look.theme} style={{ '--rs': look.size, '--rl': look.lead }} ref={pageRef} onScroll={onScroll} onMouseUp={onMouseUp}>
+        <div className="rbar"><Link to="/student" className="btn ghost sm" aria-label="Back to home"><Icon n="left" s={18} /></Link>
+          <select className="input" aria-label="Chapter" value={chNo} onChange={e => setChNo(+e.target.value)}>{bk.chapters.map(c => <option key={c.number} value={c.number}>Unit {c.number}: {c.title}</option>)}</select>
+          <button className="btn ghost sm" onClick={() => setLookOpen(true)} aria-label="Reading comfort"><Icon n="text" s={18} /></button></div>
         <div className="inner">
-          <div className="chap-head"><span className="u">Unit {ch.number}</span><h1>{ch.title}</h1><span className="muted">Tap a highlighted word to have it explained, or select any words.</span></div>
+          <div className="chap-head"><span className="u">Unit {ch.number}</span><h1>{ch.title}</h1><span className="muted">Tap a highlighted word to have it explained, or select any words.</span>
+            <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setLookOpen(true)}><Icon n="text" s={16} />Text size and colour</button></div>
           {ch.blocks.map(b => <Blk key={b.id} b={b} bookId={id} onWord={onWord} />)}
-          <div className="chap-next">{bk.chapters.find(c => c.number > ch.number) && <button className="btn primary" onClick={() => setChNo(bk.chapters.find(c => c.number > ch.number).number)}>Next unit</button>}</div>
+          <div className="chap-end">
+            <div style={{ flex: 1, minWidth: 200 }}><b>End of unit {ch.number}</b><div className="muted" style={{ fontSize: 13 }}>{bk.practice_packs?.length ? 'Check what stayed with you: try past exam questions from this chapter.' : 'Well done. On to the next one.'}</div></div>
+            {bk.practice_packs?.map(p => p.owned ? <Link key={p.id} className="btn" to={`/student/exam/${p.id}?tab=practice&chapter=${encodeURIComponent(ch.title)}`}>Practise this chapter</Link>
+              : <Link key={p.id} className="btn" to="/student/store">Get {p.title} to practise</Link>)}
+            {bk.chapters.find(c => c.number > ch.number) && <button className="btn primary lg inline" onClick={() => setChNo(bk.chapters.find(c => c.number > ch.number).number)}>Next unit<Icon n="right" s={18} /></button>}</div>
         </div>
       </article>
       <aside className="sside">
@@ -144,34 +137,17 @@ export default function Reader() {
           <h2>{sel.term}</h2>
           <div className="scard"><div className="h">What your book says</div>{sel.definition || 'Your book uses this word without defining it here.'}</div>
           <div className="scard ai"><div className="h">Explanation</div>
-            <div className="depths">{bk.rules.allowed_depths.map(d => <button key={d} className={d === depth ? 'on' : ''} onClick={() => { setDepth(d); explain(sel.term, sel.paragraph, sel.definition, sel.figs, d) }}>{DEPTH[d]}</button>)}</div>
-            {a?.loading && <div className="muted">Explaining {sel.term}<span className="dots" /></div>}
-            {a?.error && <div className="muted">{a.error}</div>}
-            {a?.text && <div className="answer">{a.text}<span className="meta">{a.meta}</span></div>}</div>
+            <ExplainPanel key={sel.key} styles={bk.rules.allowed_depths} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
+              term: sel.term, paragraph: sel.paragraph, definition: sel.definition, figures: sel.figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')) }} /></div>
           {sel.figs.map(f => <div className="scard" key={f.id}><div className="h">{f.number ? 'Figure ' + f.number : 'Figure'}</div><img src={`/api/content/${id}/${f.image}`} alt="" /><div className="muted" style={{ fontSize: 13 }}>{f.caption}</div></div>)}
         </>}
-        <div className="askbox">
-          <div className="h">Ask your own question
-            {quota && <span className={'tag ' + (quota.left > 3 ? 'ok' : quota.left > 0 ? 'warn' : 'bad')}>
-              {quota.left} left today</span>}</div>
-          {asked.map((x, i) => <div key={i} className="asked">
-            <b>{x.q}</b><div>{x.a}</div>
-            {!x.counted && <span className="free">this one did not use a question</span>}
-          </div>)}
-          <div className="askrow">
-            <input value={q} placeholder="Ask about this page…"
-              onChange={e => setQ(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && ask()} />
-            <button className="btn primary sm" onClick={ask} disabled={asking || !q.trim()}>
-              {asking ? '…' : 'Ask'}</button>
-          </div>
-          <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }}>
-            Tapping a highlighted word is always free. Only your own questions count, and a question
-            we cannot answer from this page does not.
-          </div>
-        </div>
       </aside>
-      {selBtn && <button className="selbtn" style={{ left: selBtn.x, top: selBtn.y }} onMouseDown={e => { e.preventDefault(); explain(selBtn.t, selBtn.para, '', []); setSelBtn(null); getSelection().removeAllRanges() }}>Explain</button>}
+      {narrow && sel && <Sheet title={sel.term} onClose={() => { setSel(null); document.querySelectorAll('.kw.sel').forEach(x => x.classList.remove('sel')) }}>
+        {sel.definition && <div className="scard" style={{ marginBottom: 12 }}><div className="h">What your book says</div>{sel.definition}</div>}
+        <ExplainPanel key={sel.key} styles={bk.rules.allowed_depths} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
+          term: sel.term, paragraph: sel.paragraph, definition: sel.definition, figures: sel.figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')) }} /></Sheet>}
+      {lookOpen && <LookSheet look={look} set={setLook} onClose={() => setLookOpen(false)} />}
+      {selBtn && <button className="selbtn" style={{ left: selBtn.x, top: selBtn.y }} onMouseDown={e => { e.preventDefault(); explain(selBtn.t, selBtn.para, '', [], null, selBtn.block); setSelBtn(null); getSelection().removeAllRanges() }}>Explain</button>}
     </div>
   )
 }

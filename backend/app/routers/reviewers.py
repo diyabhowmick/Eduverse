@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User, Book
-from ..security import hash_pw, platform_admin
+from ..security import super_admin, hash_pw
 from ..audit import log
 
 router = APIRouter(prefix="/api/reviewers", tags=["reviewers"])
@@ -49,12 +49,12 @@ class ReviewerIn(BaseModel):
 
 
 @router.get("")
-def list_reviewers(db: Session = Depends(get_db), _=Depends(platform_admin)):
+def list_reviewers(db: Session = Depends(get_db), _=Depends(super_admin)):
     return [out(db, u) for u in db.query(User).filter(User.role == "reviewer").order_by(User.name)]
 
 
 @router.post("")
-def create(body: ReviewerIn, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def create(body: ReviewerIn, db: Session = Depends(get_db), me=Depends(super_admin)):
     email = body.email.lower().strip()
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(409, "An account with this email already exists")
@@ -71,7 +71,7 @@ class Patch(BaseModel):
 
 
 @router.patch("/{uid}")
-def patch(uid: int, body: Patch, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def patch(uid: int, body: Patch, db: Session = Depends(get_db), me=Depends(super_admin)):
     u = db.get(User, uid)
     if not u or u.role != "reviewer":
         raise HTTPException(404, "Reviewer not found")
@@ -84,7 +84,7 @@ def patch(uid: int, body: Patch, db: Session = Depends(get_db), me=Depends(platf
 
 
 @router.post("/{uid}/reset-password")
-def reset(uid: int, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def reset(uid: int, db: Session = Depends(get_db), me=Depends(super_admin)):
     u = db.get(User, uid)
     if not u or u.role != "reviewer":
         raise HTTPException(404, "Reviewer not found")
@@ -99,7 +99,7 @@ class Assign(BaseModel):
 
 
 @router.put("/books/{bid}")
-def assign(bid: int, body: Assign, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def assign(bid: int, body: Assign, db: Session = Depends(get_db), me=Depends(super_admin)):
     b = db.get(Book, bid)
     if not b:
         raise HTTPException(404, "Book not found")
@@ -120,7 +120,7 @@ class HandoverIn(BaseModel):
 
 
 @router.post("/{uid}/handover")
-def handover(uid: int, body: HandoverIn, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def handover(uid: int, body: HandoverIn, db: Session = Depends(get_db), me=Depends(super_admin)):
     """Give every book this reviewer holds to somebody else.
 
     Work already done is kept. If they approved 8 of 20 pages, the next
@@ -152,7 +152,7 @@ def handover(uid: int, body: HandoverIn, db: Session = Depends(get_db), me=Depen
 
 
 @router.delete("/{uid}")
-def remove_reviewer(uid: int, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def remove_reviewer(uid: int, db: Session = Depends(get_db), me=Depends(super_admin)):
     """Remove a reviewer who has left. Blocked while they still hold books —
     deleting them silently would leave those books with nobody to review."""
     u = db.get(User, uid)

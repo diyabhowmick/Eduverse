@@ -73,6 +73,18 @@ The warning is printed by the converter, stored on the job, and shown on the
 Processing row. The job still finishes and the book still reaches the reviewer —
 this is a warning, not a failure.
 
+## Second pass (review findings, fixed)
+
+| Problem | Fix |
+|---|---|
+| Heading fallback split at **every** heading level, so each subheading became its own unit | Splits only at the top heading level the book uses (H1 if it has two or more, else H2, else H3). Lower levels stay inside the unit as subheadings |
+| Text before the first heading belonged to no unit and was **dropped silently** | It now joins the first unit |
+| The warning was stored in `job.error`, which the screen only shows on a **failed** job, so it was never seen | New `job.note` column (added in place on startup). Shown under the status on the Processing row for finished jobs. Cleared on retry |
+| Reviewer screen could still spin forever | Explicit states: book failed to load, book has no pages, page failed to load. Each says what happened |
+| A conversion with no content at all still sent an empty book to the reviewer | The job now fails with a plain reason instead |
+| Page-split units were titled `Unit 37` | Now titled `Page 37` |
+| CHANGES.md and a `reader.py` comment still gave the wrong `EV Note` cause | Corrected |
+
 ## Checked by running it
 
 ```

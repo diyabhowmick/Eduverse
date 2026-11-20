@@ -4,23 +4,15 @@ Built on **EduVerse_Code_4168**. Nothing outside this list is touched.
 
 ## The bug — a reviewer could not open a book
 
-**Correction.** An earlier version of this note blamed a style-name mismatch
-(`EV Note` against `EVNote`). That was wrong — both resolve to the same style,
-and it was never the cause. The real cause, found by running the pipeline:
+A book with no printed section numbers (`1.1`, `2.3` ...) produced **zero
+chapters**, so no review pages were written and the reviewer's screen asked
+for `pages/undefined`. Typical case: a scanned book whose headings M1 could not
+label. Full diagnosis and fix in **PIPELINE_FIX.md**.
 
-`structure.py` built a book's chapters **only** from printed section numbers
-(`SEC_RE`, which wants `3.2 Heading`). A book without them produced no chapters
-at all, so the book reached the reviewer with nothing to open and the screen
-asked for `pages/undefined` forever.
-
-Fixed with a fallback ladder in `structure.py` — section numbers, then any
-heading style, then one unit per page. The last rung always succeeds, because
-every item knows its page, so **no book can fail to open again**; it is recorded
-as `split_by` so a weak conversion is visible instead of silent.
-
-A second, separate bug was fixed alongside it: `content.py` used
-`if b.get("page")`, which treats page 0 as "no page" and silently discarded a
-whole book's pages. It now tests `is not None`.
+(An earlier note here blamed a style name mismatch, `EV Note` vs `EVNote`.
+That was wrong: both documents use the same style. The space-insensitive match
+in `reader.py` and the `page is not None` check in `content.py` stay as
+harmless guards.)
 
 ## 1 · Remove a reviewer, hand over their books
 

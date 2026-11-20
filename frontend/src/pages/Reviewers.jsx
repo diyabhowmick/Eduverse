@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, when } from '../api'
-import { useLoad, Page, Modal, Field, Tag, useToast, useForm, Icon } from '../ui'
+import { useLoad, Page, Modal, Field, Tag, useToast, useForm, Icon, ask } from '../ui'
 
 export default function Reviewers() {
   const { data, reload } = useLoad('/api/reviewers')
@@ -23,9 +23,9 @@ export default function Reviewers() {
           <td className="acts"><button className="btn ghost sm" onClick={() => act(async () => setMade(await api(`/api/reviewers/${r.id}/reset-password`, { method: 'POST' })), 'Password reset')}>Reset password</button>
             <button className="btn ghost sm" onClick={() => act(() => api('/api/reviewers/' + r.id, { method: 'PATCH', body: { status: r.status === 'active' ? 'suspended' : 'active' } }), 'Updated')}>{r.status === 'active' ? 'Suspend' : 'Reactivate'}</button>
             {r.in_review > 0 && <button className="btn ghost sm" onClick={() => { setHand(r); setTo('') }}>Hand over</button>}
-            <button className="btn ghost sm" onClick={() => {
+            <button className="btn ghost sm" onClick={async () => {
               if (r.in_review) return toast(`${r.name} still has ${r.in_review} book${r.in_review > 1 ? 's' : ''} to review. Hand them over first.`, true)
-              if (confirm(`Remove ${r.name}? Books they published keep their name.`))
+              if (await ask(`Remove ${r.name}? Books they published keep their name.`, { yes: 'Remove' }))
                 act(() => api('/api/reviewers/' + r.id, { method: 'DELETE' }), 'Reviewer removed')
             }}>Remove</button></td></tr>)}</tbody></table>
         {data && !data.length && <div className="empty">No reviewers yet</div>}</div>

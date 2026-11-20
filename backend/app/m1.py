@@ -177,6 +177,24 @@ def effective(db) -> dict:
     return {**defaults(), **stored(db)}
 
 
+ENV_KEYS = {"openai_api_key": "OPENAI_API_KEY"}  # secret field -> server environment variable
+
+
+def env_keys() -> list:
+    """Secret fields that have a key in the server environment (Railway variables)."""
+    return [k for k, env in ENV_KEYS.items() if os.getenv(env)]
+
+
+def with_env(values: dict) -> dict:
+    """Values to run M1 with: a key typed in Settings wins, otherwise the server's environment variable.
+    Used only at run time, never for what is saved or shown, so an environment key never lands in the database."""
+    v = dict(values)
+    for k, env in ENV_KEYS.items():
+        if not v.get(k) and os.getenv(env):
+            v[k] = os.getenv(env)
+    return v
+
+
 def masked(values: dict) -> dict:
     v = copy.deepcopy(values)
     for k in SECRETS:

@@ -1,4 +1,4 @@
-import copy
+import copy, os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
@@ -6,6 +6,7 @@ from ..models import Setting
 from ..security import super_admin
 from ..audit import log
 from ..defaults import ALL
+from ..llm_client import openai_json
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 SECRET_FIELDS = ("api_key",)
@@ -17,6 +18,33 @@ def mask(v):
         if p.get("api_key"):
             p["api_key"] = "saved"
     return v
+
+
+def openai_conf(db):
+    s = db.get(Setting, "ai")
+    ai = s.value if s else ALL["ai"]
+    p = ai["providers"]["openai"]
+    source = "saved" if p.get("api_key") else "env" if os.getenv("OPENAI_API_KEY") else ""
+    return p, ai.get("exam_model") or ALL["ai"]["exam_model"], source
+
+
+@router.get("/openai/status")
+def openai_status(db: Session = Depends(get_db), _=Depends(super_admin)):
+    _p, model, source = openai_conf(db)
+    return {"has_key": bool(source), "source": source, "exam_model": model}
+
+
+@router.post("/openai/test")
+def openai_test(db: Session = Depends(get_db), _=Depends(super_admin)):
+    """Sends one tiny request, so a wrong key, model or blocked connection shows up here and not halfway through a paper."""
+    p, model, source = openai_conf(db)
+    if not source:
+        raise HTTPException(422, "No OpenAI key yet. Paste one here and save, or set OPENAI_API_KEY in backend/.env and restart.")
+    try:
+        openai_json(model, 'Reply with the JSON object {"ok": true}', base_url=p.get("base_url"), api_key=p.get("api_key") or None, timeout=45)
+    except Exception as e:
+        raise HTTPException(502, f"The test failed. {str(e)[:300]}")
+    return {"ok": True, "model": model, "source": source}
 
 
 @router.get("/{key}")

@@ -1,12 +1,12 @@
-import io, json, shutil, subprocess, tempfile, threading, time, uuid, zipfile
+import contextlib, io, json, os, shutil, subprocess, sys, tempfile, threading, time, uuid, zipfile
 from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from ..config import settings
+from ..config import settings, BASE
 from ..db import get_db, SessionLocal
-from ..models import Job, Book, ClassBook, Setting
-from ..security import platform_admin
+from ..models import Job, Book, Setting
+from ..security import super_admin
 from ..storage import get_storage
 from ..audit import log
 
@@ -27,7 +27,7 @@ def count_pages(data: bytes, name: str) -> int:
 
 def out(j: Job):
     return {"id": j.id, "stage": j.stage, "filename": j.filename, "status": j.status, "pages": j.pages,
-            "pages_done": j.pages_done, "cost_credits": j.cost_credits, "error": j.error,
+            "pages_done": j.pages_done, "cost_credits": j.cost_credits, "error": j.error, "note": j.note or "",
             "triggered_by": j.triggered_by, "created_at": j.created_at, "finished_at": j.finished_at,
             "book_id": j.book_id, "book": j.book.title if j.book else "", "book_status": j.book.status if j.book else "",
             "kind": j.kind or ("flow" if j.filename.lower().endswith(".docx") else "book"), "has_extras": bool(j.extras_key)}
@@ -76,7 +76,7 @@ def _run_m1_extract(j: Job, store, job_id: int) -> bytes:
     import hashlib
     from .. import m1
     with SessionLocal() as sdb:
-        values = m1.effective(sdb)
+        values = m1.with_env(m1.effective(sdb))
     extras = f"m1/{j.book_id}/{j.id}"
     store.put(f"{extras}/m1_settings.json", json.dumps(m1.masked(values), ensure_ascii=False, indent=1).encode())
     _update(job_id, extras_key=extras)
@@ -152,29 +152,11 @@ def run_m1(job_id: int):
                 store.put(key, flow); j.book.flow_key = key
                 j.stage = "Convert"; db.commit()
             _rep = ingest_flow(db, j.book, flow)
-            # Record what this book cost and how it was made, so the catalogue
-            # can show cost per school rather than a bare total.
-            try:
-                from .. import costing
-                det = (_rep or {}).get("detected") or {}
-                routes = det.get("routes") or {}
-                figs = ((_rep or {}).get("coverage") or {}).get("figures", 0)
-                j.book.route_native = routes.get("native", 0) + routes.get("hybrid", 0)
-                j.book.route_scanned = routes.get("scanned", 0)
-                j.book.figures_n = figs
-                j.book.split_by = (_rep or {}).get("split_by", "sections")
-                j.book.headings_n = ((_rep or {}).get("counts") or {}).get("heading", 0)
-                j.book.cost_usd = costing.book_cost(
-                    j.book.route_scanned, figs)["total"]
-            except Exception:
-                pass
-            # A book that had to be split by page still reaches the reviewer,
-            # but the super admin should be told it is not a normal conversion.
-            if _rep and _rep.get("split_warning"):
-                # Job has no separate note field, and this is shown on the
-                # Processing row already. It is a warning, not a failure: the
-                # job still finishes and the book still reaches the reviewer.
-                j.error = "Note: " + _rep["split_warning"][:480]
+            # A book that had to be split by heading or by page still reaches
+            # the reviewer, but the super admin should be told it is not a
+            # normal conversion. Kept in its own field: error is only shown on
+            # a failed job, so a warning put there was never seen.
+            j.note = (_rep or {}).get("split_warning", "")[:1000]
             if j.extras_key:
                 try:
                     specs = specs or json.loads(store.get(f"{j.extras_key}/m1_specs.json"))
@@ -209,6 +191,28 @@ def run_m1(job_id: int):
         db.close()
 
 
+def supervise(job_id: int):
+    """Runs the job in its own process, so a crash in PDF or image code fails that job and leaves the website up."""
+    from .. import m1
+    with SessionLocal() as db:
+        j = db.get(Job, job_id)
+        is_book = bool(j) and (j.kind or ("flow" if j.filename.lower().endswith(".docx") else "book")) != "flow"
+    with (m1.LOCK if is_book else contextlib.nullcontext()):  # one book through M1 at a time; the rest wait in the queue
+        r = subprocess.run([sys.executable, "-m", "app.jobrun", str(job_id)], capture_output=True, text=True, errors="replace",
+                           env={**os.environ, "PYTHONPATH": str(BASE)})
+    if r.returncode:
+        with SessionLocal() as db:
+            j = db.get(Job, job_id)
+            if j and j.status in ("queued", "running"):
+                j.status, j.finished_at = "failed", datetime.utcnow()
+                j.error = f"The processing step stopped unexpectedly (code {r.returncode}).\n{r.stderr[-1500:]}"
+                db.commit()
+
+
+def start(job_id: int):
+    threading.Thread(target=supervise, args=(job_id,), daemon=True).start()
+
+
 def resume_unfinished():
     """On startup: jobs cut off by a restart are queued and run again."""
     db = SessionLocal()
@@ -220,16 +224,16 @@ def resume_unfinished():
     finally:
         db.close()
     for jid in ids:
-        threading.Thread(target=run_m1, args=(jid,), daemon=True).start()
+        start(jid)
 
 
 @router.get("")
-def list_jobs(db: Session = Depends(get_db), _=Depends(platform_admin)):
+def list_jobs(db: Session = Depends(get_db), _=Depends(super_admin)):
     return [out(j) for j in db.query(Job).order_by(Job.created_at.desc()).all()]
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), _=Depends(platform_admin)):
+def summary(db: Session = Depends(get_db), _=Depends(super_admin)):
     s = {k: 0 for k in ("queued", "running", "done", "failed", "cancelled")}
     credits = 0.0
     for j in db.query(Job).all():
@@ -243,39 +247,32 @@ def summary(db: Session = Depends(get_db), _=Depends(platform_admin)):
 async def upload(file: UploadFile = File(...), title: str = Form(""), subject: str = Form(""), board: str = Form(""),
                  grade: str = Form(""), medium: str = Form("English"), book_id: int | None = Form(None),
                  reviewer_id: int | None = Form(None), kind: str = Form("auto"),
-                 force: bool = Form(False),
-                 db: Session = Depends(get_db), me=Depends(platform_admin)):
-    if not file.filename.lower().endswith(ALLOWED):
+                 content_type: str = Form("book"), level: str = Form("school"), university: str = Form(""), course: str = Form(""),
+                 semester: str = Form(""), price: float = Form(0), cover: UploadFile | None = File(None),
+                 db: Session = Depends(get_db), me=Depends(super_admin)):
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(ALLOWED):
         raise HTTPException(422, "Upload a PDF or Word file")
+    if content_type not in ("book", "document"):
+        raise HTTPException(422, "content_type must be book or document")
+    if price < 0:
+        raise HTTPException(422, "The price cannot be negative")
     data = await file.read()
     if not data:
         raise HTTPException(422, "The file is empty")
-
-    # Never pay twice for the same book. One textbook serves every school on
-    # that syllabus, so the same file arriving again should cost nothing. The
-    # fingerprint column already existed; nothing read it until now.
-    import hashlib
-    file_fp = "f:" + hashlib.sha256(data).hexdigest()[:48]
-    if not book_id and not force:
-        twin = db.query(Book).filter(Book.file_sha == file_fp,
-                                     Book.status.in_(("live", "in_review", "approved"))).first()
-        if twin:
-            n = db.query(ClassBook).filter(ClassBook.book_id == twin.id).count()
-            raise HTTPException(409,
-                f"We already have this book: {twin.title}. It was processed on "
-                f"{twin.created_at:%d %b %Y}"
-                + (f" and {n} class{'es' if n != 1 else ''} already read it" if n else "")
-                + ". Assign the existing one instead, or tick 'process anyway'.")
-
     if book_id:
         book = db.get(Book, book_id)
         if not book:
             raise HTTPException(404, "Book not found")
         book.status = "processing"
     else:
-        book = Book(title=title or file.filename.rsplit(".", 1)[0], subject=subject, board=board, grade=grade,
-                    medium=medium, status="processing", file_sha=file_fp)
+        book = Book(title=title.strip() or filename.rsplit(".", 1)[0], subject=subject, board=board, grade=grade,
+                    medium=medium, status="processing", track="textbook", level=level, university=university, course=course,
+                    semester=semester, price=price, content_type=content_type)
         db.add(book); db.flush()
+    if cover is not None and cover.filename:
+        from .books import save_cover
+        save_cover(book, cover.filename, await cover.read())
     if reviewer_id:
         from ..models import User
         rv = db.get(User, reviewer_id)
@@ -285,45 +282,45 @@ async def upload(file: UploadFile = File(...), title: str = Form(""), subject: s
     if kind not in ("auto", "book", "flow"):
         raise HTTPException(422, "kind must be auto, book or flow")
     if kind == "auto":
-        kind = "flow" if file.filename.lower().endswith(".docx") and is_flow_docx(data) else "book"
-    if kind == "flow" and not file.filename.lower().endswith(".docx"):
+        kind = "flow" if filename.lower().endswith(".docx") and is_flow_docx(data) else "book"
+    if kind == "flow" and not filename.lower().endswith(".docx"):
         raise HTTPException(422, "An M1 flow document is a .docx file")
     if kind == "flow" and not is_flow_docx(data):
         raise HTTPException(422, "This Word file is not an M1 flow document. Choose Printed book to run M1 on it.")
-    pages = count_pages(data, file.filename)
+    pages = count_pages(data, filename)
     book.pages = pages or book.pages
-    key = f"originals/{book.id}/{uuid.uuid4().hex}_{file.filename}"
+    key = f"originals/{book.id}/{uuid.uuid4().hex}_{filename}"
     get_storage().put(key, data)
     if kind == "book":
         book.original_key = key
     per_page = (db.get(Setting, "ai").value or {}).get("m1_credits_per_page", 1) if db.get(Setting, "ai") else 1
-    j = Job(book_id=book.id, filename=file.filename, storage_key=key, pages=pages, kind=kind, stage="Queued",
+    j = Job(book_id=book.id, filename=filename, storage_key=key, pages=pages, kind=kind, stage="Queued",
             cost_credits=pages * per_page, triggered_by=me.email)
     db.add(j); db.flush()
-    log(db, me, "job.create", "job", j.id, file=file.filename, pages=pages, book_id=book.id)
+    log(db, me, "job.create", "job", j.id, file=filename, pages=pages, book_id=book.id)
     db.commit()
-    threading.Thread(target=run_m1, args=(j.id,), daemon=True).start()
+    start(j.id)
     return out(j)
 
 
 @router.post("/{jid}/retry")
-def retry(jid: int, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def retry(jid: int, db: Session = Depends(get_db), me=Depends(super_admin)):
     j = db.get(Job, jid)
     if not j:
         raise HTTPException(404, "Job not found")
     if j.status not in ("failed", "cancelled"):
         raise HTTPException(409, "Only failed or cancelled jobs can be retried")
-    j.status, j.error, j.finished_at, j.pages_done, j.stage = "queued", "", None, 0, "Queued"
+    j.status, j.error, j.note, j.finished_at, j.pages_done, j.stage = "queued", "", "", None, 0, "Queued"
     if j.book:
         j.book.status = "processing"
     log(db, me, "job.retry", "job", jid)
     db.commit()
-    threading.Thread(target=run_m1, args=(jid,), daemon=True).start()
+    start(jid)
     return out(j)
 
 
 @router.post("/{jid}/cancel")
-def cancel(jid: int, db: Session = Depends(get_db), me=Depends(platform_admin)):
+def cancel(jid: int, db: Session = Depends(get_db), me=Depends(super_admin)):
     j = db.get(Job, jid)
     if not j:
         raise HTTPException(404, "Job not found")
@@ -342,7 +339,7 @@ EXTRAS = {"report": ("report.html", "text/html; charset=utf-8"), "settings": ("m
 
 
 @router.get("/{jid}/extras/{name}")
-def extras(jid: int, name: str, db: Session = Depends(get_db), _=Depends(platform_admin)):
+def extras(jid: int, name: str, db: Session = Depends(get_db), _=Depends(super_admin)):
     """What M1 left behind for this job: its HTML report, the settings it ran with, its ledger."""
     from fastapi.responses import Response
     j = db.get(Job, jid)
