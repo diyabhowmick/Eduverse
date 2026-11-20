@@ -14,6 +14,19 @@ class LocalStorage:
         p.write_bytes(data)
         return key
 
+    def put_file(self, key: str, src: Path) -> str:
+        """Store a file that is already on disk, without reading it into memory.
+
+        A textbook is 75-85 MB; put(key, f.read_bytes()) holds the whole book
+        in memory twice over, on top of whatever the upload itself is holding.
+        """
+        import shutil
+        p = self.root / key
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(src, "rb") as a, open(p, "wb") as b:
+            shutil.copyfileobj(a, b, 1024 * 1024)
+        return key
+
     def get(self, key: str) -> bytes:
         return (self.root / key).read_bytes()
 
@@ -29,6 +42,10 @@ class S3Storage:
 
     def put(self, key: str, data: bytes) -> str:
         self.s3.put_object(Bucket=self.bucket, Key=key, Body=data)
+        return key
+
+    def put_file(self, key: str, src: Path) -> str:
+        self.s3.upload_file(str(src), self.bucket, key)
         return key
 
     def get(self, key: str) -> bytes:

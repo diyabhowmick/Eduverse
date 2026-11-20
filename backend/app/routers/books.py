@@ -215,6 +215,76 @@ def mark_fixed(bid: int, page: int, body: Fixed, db: Session = Depends(get_db), 
     return {"page": page, "state": "to_recheck", "book_status": b.status}
 
 
+@router.get("/storage-check")
+def storage_check(_=Depends(super_admin)):
+    """Where files are being written, and whether that place survives a redeploy.
+
+    Books kept disappearing and nobody could tell why, because nothing in the
+    application ever said where it was writing. A container's own disk is
+    thrown away on every deploy; only a mounted volume lasts. This answers both
+    questions out loud: the folder in use, and the mount it belongs to.
+    """
+    import contextlib, shutil, uuid
+    from ..config import settings
+    d = {"backend": settings.storage_backend, "root": str(settings.storage_dir)}
+    if settings.storage_backend == "s3":
+        d.update(bucket=settings.s3_bucket, region=settings.s3_region, persistent=True,
+                 verdict=f"Files go to the S3 bucket {settings.s3_bucket}. They are not affected by a redeploy.")
+        return d
+    root = settings.storage_dir
+    d["absolute"] = root.is_absolute()
+    d["exists"] = root.exists()
+    # Which mount the folder sits on: the longest mount point that is a prefix of it.
+    mount, source = "/", ""
+    try:
+        for line in Path("/proc/self/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                mp = parts[1]
+                if (str(root) == mp or str(root).startswith(mp.rstrip("/") + "/")) and len(mp) >= len(mount):
+                    mount, source = mp, parts[0]
+    except Exception:
+        pass
+    d["mount"] = mount
+    d["mount_source"] = source
+    d["on_volume"] = mount not in ("/", "")
+    # Write, read back, delete. Nothing else proves the folder is usable.
+    try:
+        probe = f"_probe/{uuid.uuid4().hex}"
+        get_storage().put(probe, b"eduverse")
+        ok = get_storage().get(probe) == b"eduverse"
+        with contextlib.suppress(Exception):
+            (root / probe).unlink()
+        d["writable"], d["probe"] = ok, "ok" if ok else "wrote but read back wrong"
+    except Exception as e:
+        d["writable"], d["probe"] = False, f"{type(e).__name__}: {e}"[:200]
+    try:
+        u = shutil.disk_usage(root if root.exists() else root.parent)
+        d["free_gb"] = round(u.free / 1e9, 2)
+        d["total_gb"] = round(u.total / 1e9, 2)
+    except Exception:
+        pass
+    # How much is actually there, so an empty volume is obvious.
+    for name in ("books", "originals", "covers"):
+        p = root / name
+        n = b = 0
+        if p.exists():
+            for f in p.rglob("*"):
+                if f.is_file():
+                    n += 1
+                    b += f.stat().st_size
+        d[name] = {"files": n, "mb": round(b / 1e6, 1)}
+    if not d["writable"]:
+        d["verdict"] = f"Nothing can be saved: {settings.storage_dir} is not writable. Uploads and conversions will fail until this is fixed."
+    elif not d["on_volume"]:
+        d["verdict"] = (f"{settings.storage_dir} is on the container's own disk, not on a volume. "
+                        f"Everything saved here is destroyed by the next deploy — this is why converted books go missing. "
+                        f"Mount a Railway volume and set STORAGE_DIR to its mount path.")
+    else:
+        d["verdict"] = f"{settings.storage_dir} is on the volume mounted at {mount}. Files here survive a redeploy."
+    return d
+
+
 @router.get("/content-check")
 def content_check(db: Session = Depends(get_db), _=Depends(super_admin)):
     """Books the database says are converted whose file is not in storage.

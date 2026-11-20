@@ -38,6 +38,8 @@ export default function Issues() {
   // A book whose converted file is gone looks fine in the catalogue and fails
   // the moment anybody opens it, including a student. Surface it here.
   const { data: broken } = useLoad('/api/books/content-check')
+  // Why they went missing, which is a different question from which ones did.
+  const { data: store } = useLoad('/api/books/storage-check')
   const [fixing, setFixing] = useState(null); const [note, setNote] = useState('')
   const toast = useToast()
   async function markFixed() {
@@ -62,6 +64,24 @@ export default function Issues() {
       </p>
 
       <div className="stack">
+        {store && <div className="card">
+          <div className="card-h"><h3>Where files are stored</h3>
+            <Tag s={!store.writable ? 'bad' : store.persistent || store.on_volume ? 'ok' : 'warn'}>
+              {!store.writable ? 'Cannot save' : store.persistent || store.on_volume ? 'Safe' : 'Not safe'}</Tag>
+            <span className="sub">Uploads and converted books</span></div>
+          <table className="t">
+            <tbody>
+              <tr><td>Folder</td><td><code>{store.root}</code></td></tr>
+              {store.backend === 'local' && <tr><td>Mounted at</td><td>{store.on_volume
+                ? <><code>{store.mount}</code> <span className="muted">— a volume, so it survives a deploy</span></>
+                : <b style={{ color: 'var(--red)' }}>the container's own disk — wiped on every deploy</b>}</td></tr>}
+              <tr><td>Can write</td><td>{store.writable ? 'Yes' : <b style={{ color: 'var(--red)' }}>No — {store.probe}</b>}</td></tr>
+              {store.free_gb !== undefined && <tr><td>Space</td><td>{store.free_gb} GB free of {store.total_gb} GB</td></tr>}
+              {store.books && <tr><td>Holding now</td><td>{store.books.files} converted files ({store.books.mb} MB), {store.originals.files} originals ({store.originals.mb} MB)</td></tr>}
+            </tbody>
+          </table>
+          <div className="note">{store.verdict}</div>
+        </div>}
         {!!broken?.length && <div className="card">
           <div className="card-h"><h3>Books with no content file</h3><Tag s="bad">{broken.length}</Tag>
             <span className="sub">These fail for anyone who opens them, students included</span></div>

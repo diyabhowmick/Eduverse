@@ -158,7 +158,11 @@ export const Switch = ({ checked, onChange, label }) => (
 const TONES = { active: 'ok', live: 'ok', done: 'ok', approved: 'info', in_review: 'warn', running: 'info', processing: 'info',
   queued: '', upcoming: '', rejected: 'bad', pending: '', suspended: 'bad', failed: 'bad', retired: '', cancelled: '', inactive: '' }
 const LABELS = { in_review: 'In review', rejected: 'Sent back', live: 'Published' }
-export const Tag = ({ s, children }) => <span className={'tag ' + (TONES[s] ?? '')}>{children || LABELS[s] || (s ? s[0].toUpperCase() + s.slice(1) : '')}</span>
+// `s` is normally a status ("live", "failed") and the tone is looked up. A
+// tone passed straight in ("bad") used to fall through to no colour at all,
+// which quietly greyed out every flag count on the issues screen.
+const TONE_NAMES = new Set(['ok', 'warn', 'bad', 'info'])
+export const Tag = ({ s, children }) => <span className={'tag ' + (TONE_NAMES.has(s) ? s : TONES[s] ?? '')}>{children || LABELS[s] || (s ? s[0].toUpperCase() + s.slice(1) : '')}</span>
 
 export function Page({ title, sub, actions, children }) {
   return <div className="page"><div className="page-head"><div><h1>{title}</h1>{sub && <p>{sub}</p>}</div><div className="actions">{actions}</div></div>{children}</div>

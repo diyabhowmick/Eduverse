@@ -14,14 +14,18 @@ router = APIRouter(prefix="/api/jobs", tags=["processing"])
 ALLOWED = (".pdf", ".docx", ".doc")
 
 
-def count_pages(data: bytes, name: str) -> int:
+def count_pages(src: Path, name: str) -> int:
+    """Pages in an uploaded file, read from disk so an 85 MB book is never held in memory."""
     if name.lower().endswith(".pdf"):
         try:
             from pypdf import PdfReader
-            import io
-            return len(PdfReader(io.BytesIO(data)).pages)
+            return len(PdfReader(str(src)).pages)
         except Exception:
-            return data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+            n = 0
+            with open(src, "rb") as f:
+                for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
+                    n += chunk.count(b"/Type /Page") - chunk.count(b"/Type /Pages")
+            return max(n, 0)
     return 0
 
 
@@ -34,10 +38,10 @@ def out(j: Job):
             "kind": j.kind or ("flow" if j.filename.lower().endswith(".docx") else "book"), "has_extras": bool(j.extras_key)}
 
 
-def is_flow_docx(data: bytes) -> bool:
+def is_flow_docx(src: Path) -> bool:
     """An M1 flow document uses the EV paragraph styles; a printed book saved as Word does not."""
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
+        with zipfile.ZipFile(src) as z:
             doc = z.read("word/document.xml")
         return b'w:val="EVBody"' in doc or b'w:val="EVH1"' in doc
     except Exception:
@@ -284,22 +288,148 @@ def summary(db: Session = Depends(get_db), _=Depends(super_admin)):
 
 
 
+# ---------------------------------------------------------------- big uploads
+#
+# Railway's edge closes a request whose body has not finished uploading within
+# five minutes, and ends any request after fifteen (Railway docs, Public
+# Networking > Specs and limits). A Tamil Nadu textbook PDF is 75-85 MB, which
+# needs a sustained 2.4 Mbps for the whole five minutes to get through in one
+# request. On an ordinary Indian broadband link it does not make it: the edge
+# drops the request part way, the backend never receives the file, and the
+# browser is left holding a failure that never reached the application - which
+# is why the upload "just failed" with nothing in the server log.
+#
+# So the browser sends the file in 4 MB pieces. Each piece is its own short
+# request, far inside every limit, and a piece that fails is retried on its own
+# instead of starting the whole book again.
+PART_SIZE = 4 * 1024 * 1024
+PART_DIR = Path(tempfile.gettempdir()) / "ev_upload_parts"
+PARTS: dict[str, dict] = {}
+_parts_lock = threading.Lock()
+
+
+def _sweep_parts(hours=6):
+    """Pieces left behind by an upload nobody finished."""
+    for uid, u in list(PARTS.items()):
+        if time.time() - u["at"] > hours * 3600:
+            with _parts_lock:
+                PARTS.pop(uid, None)
+            shutil.rmtree(u["dir"], ignore_errors=True)
+    if PART_DIR.exists():
+        for d in PART_DIR.iterdir():
+            with contextlib.suppress(Exception):
+                if d.is_dir() and time.time() - d.stat().st_mtime > hours * 3600 and d.name not in PARTS:
+                    shutil.rmtree(d, ignore_errors=True)
+
+
+@router.post("/upload/start")
+def upload_start(filename: str = Form(...), size: int = Form(0), me=Depends(super_admin)):
+    """Begin a piece-by-piece upload. Returns the id the pieces are sent under."""
+    name = Path(filename).name
+    if not name.lower().endswith(ALLOWED):
+        raise HTTPException(422, "Upload a PDF or Word file")
+    _sweep_parts()
+    free = shutil.disk_usage(tempfile.gettempdir()).free
+    if size and free < size * 2 + 50 * 1024 * 1024:
+        raise HTTPException(507, f"There is not enough room on the server for a {size // 1048576} MB file "
+                                 f"({free // 1048576} MB free). Clear old uploads or give the service more disk.")
+    uid = uuid.uuid4().hex
+    d = PART_DIR / uid
+    d.mkdir(parents=True, exist_ok=True)
+    with _parts_lock:
+        PARTS[uid] = {"filename": name, "dir": d, "by": me.email, "at": time.time(), "size": size, "got": 0}
+    return {"upload_id": uid, "part_size": PART_SIZE, "parts": -(-size // PART_SIZE) if size else 0}
+
+
+@router.post("/upload/part")
+async def upload_part(upload_id: str = Form(...), index: int = Form(...), chunk: UploadFile = File(...),
+                      me=Depends(super_admin)):
+    """One piece of a file. Sending the same piece again simply overwrites it, so a retry is safe."""
+    u = PARTS.get(upload_id)
+    if not u:
+        raise HTTPException(410, "This upload is no longer open — the server restarted, or it was left too long. Choose the file and start again.")
+    if index < 0 or index > 100000:
+        raise HTTPException(422, "Bad piece number")
+    data = await chunk.read()
+    p = u["dir"] / f"{index:06d}"
+    p.write_bytes(data)
+    with _parts_lock:
+        u["got"] = sum(1 for _ in u["dir"].iterdir())
+        u["at"] = time.time()
+    return {"index": index, "bytes": len(data), "pieces_received": u["got"]}
+
+
+def _assemble(uid: str) -> tuple[Path, str]:
+    """Join the pieces into one file, in order, without holding it in memory."""
+    u = PARTS.get(uid)
+    if not u:
+        raise HTTPException(410, "This upload is no longer open. Choose the file and start again.")
+    parts = sorted(u["dir"].glob("[0-9]*"))
+    if not parts:
+        raise HTTPException(422, "No part of the file arrived. Try the upload again.")
+    expected = -(-u["size"] // PART_SIZE) if u["size"] else len(parts)
+    if len(parts) < expected:
+        raise HTTPException(422, f"Only {len(parts)} of {expected} pieces of the file arrived. "
+                                 f"The connection dropped part way — try the upload again.")
+    whole = u["dir"] / "whole"
+    with open(whole, "wb") as out_f:
+        for p in parts:
+            with open(p, "rb") as f:
+                shutil.copyfileobj(f, out_f, 1024 * 1024)
+            p.unlink()
+    if u["size"] and whole.stat().st_size != u["size"]:
+        raise HTTPException(422, f"The file arrived incomplete: {whole.stat().st_size // 1048576} MB of "
+                                 f"{u['size'] // 1048576} MB. Try the upload again.")
+    return whole, u["filename"]
+
+
 @router.post("")
-async def upload(file: UploadFile = File(...), title: str = Form(""), subject: str = Form(""), board: str = Form(""),
+async def upload(file: UploadFile | None = File(None), upload_id: str = Form(""),
+                 title: str = Form(""), subject: str = Form(""), board: str = Form(""),
                  grade: str = Form(""), medium: str = Form("English"), book_id: int | None = Form(None),
                  reviewer_id: int | None = Form(None), kind: str = Form("auto"),
                  content_type: str = Form("book"), level: str = Form("school"), university: str = Form(""), course: str = Form(""),
                  semester: str = Form(""), price: float = Form(0), cover: UploadFile | None = File(None),
                  db: Session = Depends(get_db), me=Depends(super_admin)):
-    filename = Path(file.filename or "").name
+    # The file arrives either in pieces (upload_id, the normal path for a book)
+    # or whole in this one request (a small file, or an older client).
+    tmp_dir = None
+    if upload_id:
+        src, filename = _assemble(upload_id)
+    elif file is not None and file.filename:
+        filename = Path(file.filename).name
+        tmp_dir = Path(tempfile.mkdtemp(prefix="ev_up_"))
+        src = tmp_dir / filename
+        with open(src, "wb") as out_f:
+            while True:
+                b = await file.read(1024 * 1024)
+                if not b:
+                    break
+                out_f.write(b)
+    else:
+        raise HTTPException(422, "Choose a file to upload")
+    try:
+        return await _create_job(db, me, src, filename, title=title, subject=subject, board=board, grade=grade,
+                                 medium=medium, book_id=book_id, reviewer_id=reviewer_id, kind=kind,
+                                 content_type=content_type, level=level, university=university, course=course,
+                                 semester=semester, price=price, cover=cover)
+    finally:
+        with _parts_lock:
+            u = PARTS.pop(upload_id, None) if upload_id else None
+        for d in (u["dir"] if u else None, tmp_dir):
+            if d:
+                shutil.rmtree(d, ignore_errors=True)
+
+
+async def _create_job(db: Session, me, src: Path, filename: str, *, title, subject, board, grade, medium,
+                      book_id, reviewer_id, kind, content_type, level, university, course, semester, price, cover):
     if not filename.lower().endswith(ALLOWED):
         raise HTTPException(422, "Upload a PDF or Word file")
     if content_type not in ("book", "document"):
         raise HTTPException(422, "content_type must be book or document")
     if price < 0:
         raise HTTPException(422, "The price cannot be negative")
-    data = await file.read()
-    if not data:
+    if not src.exists() or src.stat().st_size == 0:
         raise HTTPException(422, "The file is empty")
     if book_id:
         book = db.get(Book, book_id)
@@ -323,15 +453,21 @@ async def upload(file: UploadFile = File(...), title: str = Form(""), subject: s
     if kind not in ("auto", "book", "flow"):
         raise HTTPException(422, "kind must be auto, book or flow")
     if kind == "auto":
-        kind = "flow" if filename.lower().endswith(".docx") and is_flow_docx(data) else "book"
+        kind = "flow" if filename.lower().endswith(".docx") and is_flow_docx(src) else "book"
     if kind == "flow" and not filename.lower().endswith(".docx"):
         raise HTTPException(422, "An M1 flow document is a .docx file")
-    if kind == "flow" and not is_flow_docx(data):
+    if kind == "flow" and not is_flow_docx(src):
         raise HTTPException(422, "This Word file is not an M1 flow document. Choose Printed book to run M1 on it.")
-    pages = count_pages(data, filename)
+    pages = count_pages(src, filename)
     book.pages = pages or book.pages
     key = f"originals/{book.id}/{uuid.uuid4().hex}_{filename}"
-    get_storage().put(key, data)
+    try:
+        get_storage().put_file(key, src)
+    except OSError as e:
+        # The upload itself was fine; storage would not take it. Say so, because
+        # "upload failed" sends everybody looking at the wrong end of the problem.
+        raise HTTPException(500, f"The file uploaded but could not be saved to storage ({settings.storage_dir}): "
+                                 f"{type(e).__name__}: {e}. Check the volume on the Flags and issues screen.")
     if kind == "book":
         book.original_key = key
     per_page = (db.get(Setting, "ai").value or {}).get("m1_credits_per_page", 1) if db.get(Setting, "ai") else 1

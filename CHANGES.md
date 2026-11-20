@@ -115,3 +115,68 @@ PULL BACK   Science Standard 8 → 200 → status now: in_review
 TEACHER     36 students · 2 classes · 41% average · 4 behind
             admin endpoint blocked: 403
 ```
+
+---
+
+## Upload failed, and books went missing — 20 Nov
+
+Two separate faults, found by reading the platform's own limits rather than
+guessing again.
+
+### 1 · "Upload failed" on a textbook
+
+Railway closes any request whose **body has not finished uploading within five
+minutes** (Railway docs, Public Networking → Specs and limits). A Tamil Nadu
+textbook PDF is 75–85 MB, which needs a steady 2.4 Mbps held for the whole five
+minutes to arrive in one request. On an ordinary broadband line it does not get
+there: the edge cuts the request off, **the backend never receives the file**,
+and the browser is left with a failure that never reached the application —
+which is why nothing appeared in the server log.
+
+The browser now sends the file in **4 MB pieces**. Each piece is its own short
+request, far inside every limit; a piece that fails is retried three times on
+its own instead of restarting the book. A progress percentage shows while it
+goes. The pieces are joined on the server by streaming, so an 85 MB book is
+never held in memory, and the joined file is checked against the size the
+browser declared before a job is created.
+
+- `POST /api/jobs/upload/start` → `{upload_id, part_size}`
+- `POST /api/jobs/upload/part` → one piece; sending the same piece again is safe
+- `POST /api/jobs` now takes `upload_id` **or** a whole `file` as before
+
+Verified end to end: their 85 MB 8th Science PDF through the real form, 21
+pieces, byte-identical in storage (md5 match), 288 pages detected, job created
+— including on a connection throttled to 400 KB/s.
+
+### 2 · Books that open with "needs to be processed again"
+
+Nothing in the application ever said **where** it was writing. A container's
+own disk is thrown away on every deploy; only a mounted volume survives.
+
+**Flags and issues** now opens with a *Where files are stored* card: the folder
+in use, the mount it belongs to (read from `/proc/self/mounts`), whether a
+write-read-delete probe succeeds, free space, and how much is actually held.
+If the folder is not on a volume it says so in red, because that is the whole
+explanation for a converted book disappearing.
+
+`GET /api/books/storage-check`.
+
+### 3 · Failures that said nothing
+
+An unforeseen crash used to reach the browser as Starlette's plain-text
+"Internal Server Error", which the frontend could not read, so everything
+looked identical: *"Request failed"*.
+
+- Any unhandled error now returns the real reason to a super admin or platform
+  admin, and a neutral message to everybody else. The traceback always goes to
+  the server log marked `[EV ERROR]`, which is searchable in Railway's log view.
+- A 502 or 504 is named as the platform's proxy, not the application.
+- A dropped connection says so instead of "Failed to fetch".
+- A file that uploads but cannot be saved names the storage folder and the
+  operating-system error.
+
+### 4 · Flag counts were grey
+
+`Tag` looked a status up in a tone table, so a tone passed in directly
+(`bad`, `warn`) fell through to no colour — which silently greyed out every
+flag count and status on the issues screen. Fixed in the shared component.

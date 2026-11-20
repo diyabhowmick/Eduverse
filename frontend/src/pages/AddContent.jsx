@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, sendInPieces } from '../api'
 import { useLoad, Page, Field, Dropzone, Icon, useToast } from '../ui'
 
 const TYPES = [
@@ -33,7 +33,7 @@ export default function AddContent() {
   const [v, setV] = useState({ title: '', level: 'school', board: '', grade: '', university: '', course: '', semester: '', subject: '', medium: 'English', price: 0, reviewer_id: '', kind: 'auto',
     exam: '', year: new Date().getFullYear(), session: '', text: '' })
   const [file, setFile] = useState(null); const [key, setKey] = useState(null); const [cover, setCover] = useState(null)
-  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [prog, setProg] = useState(null)
   const set = (k, x) => setV(s => ({ ...s, [k]: x }))
   const exam = type === 'exam'
 
@@ -61,7 +61,7 @@ export default function AddContent() {
     const fields = exam ? ['level', 'exam', 'board', 'grade', 'university', 'course', 'semester', 'subject', 'price', 'year', 'session', 'title', 'text']
       : ['title', 'level', 'board', 'grade', 'university', 'course', 'semester', 'subject', 'medium', 'price', 'reviewer_id', 'kind']
     fields.forEach(k => v[k] !== '' && f.append(k, v[k]))
-    if (file) f.append('file', file)
+    if (file && exam) f.append('file', file)
     if (cover) f.append('cover', cover)
     try {
       if (exam) {
@@ -71,11 +71,20 @@ export default function AddContent() {
         nav(`/sa/exams/${r.book_id}?paper=${r.id}`)
       } else {
         f.append('content_type', type)
+        // A book goes up in pieces: one request cannot carry 80 MB through the
+        // five minute body limit on a normal connection.
+        if (file.size > 4 * 1024 * 1024) {
+          setProg(0)
+          f.append('upload_id', await sendInPieces(file, setProg))
+        } else {
+          f.append('file', file)
+        }
+        setProg(null)
         await api('/api/jobs', { method: 'POST', form: f })
         toast(type === 'book' ? 'Book added. Converting now.' : 'Document added. Converting now.')
         nav('/sa/processing')
       }
-    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+    } catch (e) { setErr(e.message) } finally { setBusy(false); setProg(null) }
   }
 
   if (!type) return (
@@ -112,7 +121,15 @@ export default function AddContent() {
           {!exam && <><Field label="Medium"><input className="input" value={v.medium} onChange={e => set('medium', e.target.value)} /></Field>
             <Field label="File type" hint="Leave on Detect unless the file was already converted by the book reader"><div className="seg" role="radiogroup">{[['auto', 'Detect'], ['book', 'Needs reading'], ['flow', 'Already converted']].map(([k, l]) => <button key={k} type="button" className={v.kind === k ? 'on' : ''} onClick={() => set('kind', k)} role="radio" aria-checked={v.kind === k}>{l}</button>)}</div></Field></>}
         </div></details>
-        <div className="add-actions"><button className="btn primary" onClick={save} disabled={busy}><Icon n="upload" s={16} />{busy ? (exam ? 'Reading the paper' : 'Uploading') : (exam ? 'Add test set' : 'Add and start converting')}</button></div>
+        <div className="add-actions">
+          <button className="btn primary" onClick={save} disabled={busy}><Icon n="upload" s={16} />
+            {busy ? (exam ? 'Reading the paper' : prog === null ? 'Uploading' : `Uploading ${prog}%`) : (exam ? 'Add test set' : 'Add and start converting')}</button>
+          {busy && prog !== null && <div style={{ flex: 1, minWidth: 180 }}>
+            <div className="bar-track"><i style={{ width: prog + '%' }} /></div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {prog < 100 ? `Sending the file in pieces. ${(file.size / 1048576).toFixed(0)} MB — keep this page open.` : 'Sent. Starting the conversion.'}</div>
+          </div>}
+        </div>
       </div></div>
     </Page>)
 }

@@ -19,6 +19,37 @@ def _content_missing(request, exc):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+# Anything that goes wrong and was not foreseen used to leave the browser with
+# Starlette's plain-text "Internal Server Error", which the frontend could not
+# read, so every unexpected failure looked the same: "Request failed". The
+# reason was only ever in the server log, which the person uploading cannot
+# see. Put the reason in the response for whoever runs the platform, and always
+# write the traceback to the log with a mark that is easy to search for.
+@app.exception_handler(Exception)
+def _unhandled(request, exc):
+    import traceback
+    from fastapi.responses import JSONResponse
+    traceback.print_exc()
+    print(f"[EV ERROR] {request.method} {request.url.path} -> {type(exc).__name__}: {exc}", flush=True)
+    if _is_staff(request):
+        return JSONResponse(status_code=500, content={
+            "detail": f"{type(exc).__name__}: {exc}"[:600],
+            "where": f"{request.method} {request.url.path}"})
+    return JSONResponse(status_code=500, content={
+        "detail": "Something went wrong on the server. The super admin can see the reason in the server log."})
+
+
+def _is_staff(request) -> bool:
+    """Only a super admin or platform admin is told what broke."""
+    try:
+        import jwt
+        tok = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        role = jwt.decode(tok, settings.jwt_secret, algorithms=["HS256"]).get("role")
+        return role in ("super_admin", "platform_admin")
+    except Exception:
+        return False
+
+
 for r in (auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline):
     app.include_router(r.router)
 app.include_router(review.public)
