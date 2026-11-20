@@ -5,8 +5,20 @@ from .config import settings
 from .db import Base, engine, SessionLocal
 from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn
 from .seed import ensure_core
+from .content import ContentMissing
 
 app = FastAPI(title="EduVerse API", version="0.1.0")
+
+
+# A book whose converted file is missing from storage used to surface as a bare
+# 500 — to a reviewer, a super admin, or a student trying to read it. Say what
+# is actually wrong and what fixes it, once, for every route that reads a book.
+@app.exception_handler(ContentMissing)
+def _content_missing(request, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 for r in (auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline):
     app.include_router(r.router)
 app.include_router(review.public)

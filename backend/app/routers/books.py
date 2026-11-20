@@ -213,3 +213,25 @@ def mark_fixed(bid: int, page: int, body: Fixed, db: Session = Depends(get_db), 
     log(db, me, "issue.fixed", "book", bid, page=page, category=r.category)
     db.commit()
     return {"page": page, "state": "to_recheck", "book_status": b.status}
+
+
+@router.get("/content-check")
+def content_check(db: Session = Depends(get_db), _=Depends(super_admin)):
+    """Books the database says are converted whose file is not in storage.
+
+    A book processed while no volume was mounted wrote its content to the
+    container's own disk, and the next deploy took it with it. The row stays,
+    so the book looks fine in the catalogue and fails the moment anybody opens
+    it — including a student. Better to find them here than there.
+    """
+    from .. import content as C
+    out = []
+    for b in db.query(Book).filter(Book.content_key != "").all():
+        try:
+            C.load(b)
+        except Exception as e:
+            out.append({"id": b.id, "title": b.title, "status": b.status,
+                        "pages": b.pages, "content_key": b.content_key,
+                        "live_at": b.live_at,
+                        "why": "File missing from storage" if isinstance(e, C.ContentMissing) else str(e)[:160]})
+    return out

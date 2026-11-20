@@ -17,8 +17,28 @@ def _store():
     return get_storage()
 
 
+class ContentMissing(Exception):
+    """The database says this book was converted, but its file is not in storage.
+
+    This happens when a book was processed while no volume was mounted: the
+    content went to the container's own disk and vanished on the next deploy,
+    leaving the row behind. It is not a bug in the reader — the book has to be
+    processed again — and it used to surface as a bare 500 for whoever opened
+    it, including a student.
+    """
+
+    def __init__(self, book: Book):
+        self.book = book
+        super().__init__(
+            f"The converted file for “{book.title}” is missing from storage "
+            f"({book.content_key}). The book needs to be processed again.")
+
+
 def load(book: Book) -> dict:
-    return json.loads(_store().get(book.content_key + "/book.json"))
+    try:
+        return json.loads(_store().get(book.content_key + "/book.json"))
+    except FileNotFoundError:
+        raise ContentMissing(book)
 
 
 def save(book: Book, data: dict):

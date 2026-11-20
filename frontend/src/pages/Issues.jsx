@@ -35,6 +35,9 @@ export default function Issues() {
   const [cat, setCat] = useState('')
   const { data, reload } = useLoad(`/api/books/issues?status=${state}&category=${cat}`, [state, cat])
   const { data: sum, reload: reloadSum } = useLoad('/api/books/issues/summary', [state, cat])
+  // A book whose converted file is gone looks fine in the catalogue and fails
+  // the moment anybody opens it, including a student. Surface it here.
+  const { data: broken } = useLoad('/api/books/content-check')
   const [fixing, setFixing] = useState(null); const [note, setNote] = useState('')
   const toast = useToast()
   async function markFixed() {
@@ -59,6 +62,22 @@ export default function Issues() {
       </p>
 
       <div className="stack">
+        {!!broken?.length && <div className="card">
+          <div className="card-h"><h3>Books with no content file</h3><Tag s="bad">{broken.length}</Tag>
+            <span className="sub">These fail for anyone who opens them, students included</span></div>
+          <table className="t">
+            <thead><tr><th>Book</th><th>Stage</th><th className="num">Pages</th><th>What is wrong</th></tr></thead>
+            <tbody>{broken.map(b => (
+              <tr key={b.id}><td><b>{b.title}</b><div className="muted" style={{ fontSize: 12 }}>{b.content_key}</div></td>
+                <td><Tag s={b.status} /></td><td className="num">{b.pages}</td><td>{b.why}</td></tr>))}</tbody>
+          </table>
+          <div className="note">
+            The database says these were converted, but the file is not in storage. That happens when a book is
+            processed while no volume is mounted: the content goes to the container's own disk and the next deploy
+            takes it with it. <b>Process the book again</b> from Add content. If the original upload is gone too,
+            it has to be re-uploaded.
+          </div>
+        </div>}
         {!!sum?.by_category?.length && <div className="card">
           <div className="card-h"><h3>What is going wrong</h3><span className="sub">Open issues by kind. The biggest number is where the pipeline needs work.</span></div>
           <table className="t">
