@@ -180,3 +180,26 @@ looked identical: *"Request failed"*.
 `Tag` looked a status up in a tone table, so a tone passed in directly
 (`bad`, `warn`) fell through to no colour — which silently greyed out every
 flag count and status on the issues screen. Fixed in the shared component.
+
+### 5 · `null value in column "file_sha"` — adding any book failed
+
+A database carried forward from an **older build of EduVerse** still has that
+build's columns: `books.file_sha`, `books.split_by`, `books.cost_usd`.
+`create_all` adds tables and `add_missing_columns` adds columns, but neither
+ever removes one. Those three are `NOT NULL` with no default, and nothing in
+the current code knows to fill them — so **every insert into `books` failed**,
+and it failed a long way from its cause: adding a book died on
+`null value in column "file_sha"`.
+
+`relax_legacy_columns()` runs at startup, after the other two. For each table
+the models define, it finds columns the live database has that the models do
+*not*, and which are `NOT NULL` with no default, and lifts only that
+constraint. Columns the models own are never touched, primary keys are
+skipped, no column is dropped and no data is changed. Each one is named in the
+log as `[EV SCHEMA]`. PostgreSQL only — SQLite cannot alter a constraint and a
+fresh file never has the problem.
+
+Verified against a real PostgreSQL 16 carrying exactly those three legacy
+columns: the insert failed with their error, and after the fix the same upload
+succeeded. `id`, `title`, `status` and `pages` stayed `NOT NULL`; a second
+start printed nothing further.

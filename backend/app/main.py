@@ -90,10 +90,47 @@ def add_missing_columns():
                     con.execute(text(ddl))
 
 
+def relax_legacy_columns():
+    """Columns left behind by an older version of EduVerse, which now block every insert.
+
+    `create_all` adds tables and `add_missing_columns` adds columns, but neither
+    ever removes one. A database carried forward from an earlier build still
+    has that build's columns — `books.file_sha` is one. If such a column is
+    NOT NULL with no default, nothing in the current code knows to fill it, so
+    *every* insert into that table fails, and it fails a long way from its
+    cause: adding a book died on `null value in column "file_sha"`.
+
+    The column and its data are left alone. Only the constraint that makes the
+    table unusable is lifted, and only for columns the models no longer define.
+    """
+    if engine.dialect.name != "postgresql":
+        return   # SQLite cannot alter a constraint, and a fresh file never has this problem
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        known = {c.name for c in table.columns}
+        pk = set(insp.get_pk_constraint(table.name).get("constrained_columns") or [])
+        for col in insp.get_columns(table.name):
+            name = col["name"]
+            if name in known or name in pk or col.get("nullable") or col.get("default") is not None:
+                continue
+            try:
+                with engine.begin() as con:
+                    con.execute(text(f'ALTER TABLE {table.name} ALTER COLUMN "{name}" DROP NOT NULL'))
+                print(f"[EV SCHEMA] {table.name}.{name} is left over from an older version of EduVerse and was "
+                      f"blocking every insert into {table.name}. Its NOT NULL has been lifted; the data is untouched.",
+                      flush=True)
+            except Exception as e:
+                print(f"[EV SCHEMA] could not relax {table.name}.{name}: {e}", flush=True)
+
+
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
     add_missing_columns()
+    relax_legacy_columns()
     with SessionLocal() as db:
         ensure_core(db)
     jobs.resume_unfinished()
