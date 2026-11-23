@@ -1,0 +1,27 @@
+/* ===== Fold-the-page intro (scoped under .evi) ===== */
+.evi{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;overflow:hidden;cursor:pointer;
+  --ink:#0B0C0F;--accent:#E0212F}
+.evi-bg{position:absolute;inset:0;
+  background:radial-gradient(ellipse 60% 55% at 50% 42%,rgba(224,33,47,.16),transparent 70%),
+             radial-gradient(ellipse 120% 90% at 50% 120%,rgba(255,255,255,.04),transparent 60%),
+             linear-gradient(180deg,#121318,#0A0B0E);
+  transition:opacity .85s cubic-bezier(.65,0,.25,1)}
+.evi-bg:after{content:"";position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+.evi-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:1;pointer-events:none}
+.evi-flyer{transform-origin:50% 50%;will-change:transform,opacity;animation:evi-in .8s cubic-bezier(.2,.7,.2,1) both}
+@keyframes evi-in{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+
+/* fly-out */
+.evi.is-fly{pointer-events:none}
+.evi.is-fly .evi-bg,.evi.is-fly .evi-progress,.evi.is-fly .evi-skip{opacity:0!important}
+
+.evi-skip{position:absolute;right:28px;bottom:26px;z-index:2;font:600 12px/1 Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;
+  color:rgba(255,255,255,.62);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:10px 16px;cursor:pointer;
+  backdrop-filter:blur(6px);transition:color .2s,border-color .2s,background .2s,opacity .4s}
+.evi-skip:hover{color:#fff;border-color:rgba(255,255,255,.35);background:rgba(255,255,255,.08)}
+.evi-skip:focus-visible{outline:2px solid #E0212F;outline-offset:3px}
+.evi-progress{position:absolute;left:50%;bottom:34px;width:120px;height:2px;margin-left:-60px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;z-index:2;transition:opacity .4s}
+.evi-progress i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#E0212F,#FF7A82);transform-origin:0 50%;animation:evi-prog linear both}
+@keyframes evi-prog{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (max-width:700px){.evi-skip{right:16px;bottom:18px}.evi-progress{bottom:28px}}

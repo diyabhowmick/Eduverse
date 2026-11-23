@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useLoad, Page, Field, Switch, useToast, ask } from '../ui'
 
-const PROV = [['openai', 'OpenAI', 'gpt-image-1, dall-e-3'], ['gemini', 'Google Gemini', 'Imagen 4, Gemini image models'], ['local', 'Local', 'Stable Diffusion WebUI or Forge on your server']]
+const PROV = [['openai', 'OpenAI', 'gpt-image-1 (best for exact copies), dall-e-3'], ['gemini', 'Google Gemini', 'gemini-2.5-flash-image (exact copies), or Imagen 4 (from words only)'], ['local', 'Local', 'Stable Diffusion WebUI or Forge on your server']]
 const KINDS = ['photo', 'diagram', 'chart', 'map']
 
 export default function M2Settings() {
@@ -19,7 +19,7 @@ export default function M2Settings() {
   const reset = async () => { if (!(await ask('Put every M2 setting back to default? Saved API keys are kept.', { yes: 'Reset' }))) return; try { setData(await api('/api/pipeline/m2/reset', { method: 'POST' })); toast('M2 settings back to default') } catch (e) { toast(e.message, true) } }
   const runTest = async () => { if (dirty) return toast('Save first, then test', true); setBusy(true); setTest(null); try { setTest(await api('/api/pipeline/m2/test', { method: 'POST' })) } catch (e) { setTest({ ok: false, error: e.message }) } setBusy(false) }
   return (
-    <Page title="Figure redraw (M2)" sub="After conversion, every figure is drawn again from its description. The original is always kept and the reviewer picks which one students see."
+    <Page title="Figure redraw (M2)" sub="After conversion, every figure is redrawn as an exact clean copy. The original is always kept and the reviewer picks which one students see."
       actions={<><button className="btn" onClick={reset}>Reset</button><button className="btn primary" disabled={!dirty} onClick={save}>Save changes</button></>}>
       <div className="stack">
         <div className="card">
@@ -30,10 +30,21 @@ export default function M2Settings() {
               <div className="m2-kind"><b>Redraw as SVG (no model, no cost)</b><p className="muted">Diagrams, charts and maps M1 read as a structure are drawn as clean vector art in the EduVerse style.</p>
                 <div className="m1-bool"><Switch checked={v.svg_redraw} onChange={x => set('svg_redraw', x)} label="SVG redraw" /><span>{v.svg_redraw ? 'On' : 'Off'}</span></div>
                 <div className="chips" style={{ marginTop: 8 }}>{['diagram', 'chart', 'map'].map(k => <button key={k} className={'chip' + (v.svg_kinds.includes(k) ? ' on' : '')} onClick={() => toggle('svg_kinds', k)}>{k}</button>)}</div></div>
-              <div className="m2-kind"><b>Generate with the image model</b><p className="muted">Everything else, from the description, the named parts, the printed labels and the caption.</p>
+              <div className="m2-kind"><b>Generate with the image model</b><p className="muted">Everything else: an exact clean copy of the printed figure, checked against its description.</p>
                 <div className="chips">{KINDS.map(k => <button key={k} className={'chip' + (v.generate_kinds.includes(k) ? ' on' : '')} onClick={() => toggle('generate_kinds', k)}>{k}</button>)}</div>
                 <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>Decorations and text banners are never redrawn.</p></div>
             </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-h"><h3>Exact copies</h3><span className="sub">How close the new picture stays to the printed one</span></div>
+          <div className="card-b stack">
+            <div className="m2-opt"><div><b>Copy from the original picture</b><p className="muted">The image model gets the printed figure itself and is asked for an exact clean copy: same layout, same labels, only scan marks removed. Works with gpt-image-1, Gemini image models and local img2img. Imagen and DALL-E draw from the words alone.</p></div>
+              <div className="m1-bool"><Switch checked={v.replica !== false} onChange={x => set('replica', x)} label="Copy from original" /><span>{v.replica !== false ? 'On' : 'Off'}</span></div></div>
+            <div className="m2-opt"><div><b>Describe each figure again first</b><p className="muted">A strong vision model ({(v.describe_models || {})[v.provider] || 'OpenAI or Gemini only'}) writes a detailed, element-by-element description with positions and exact labels. It guides the copy and is what Eddie reads.</p></div>
+              <div className="m1-bool"><Switch checked={v.deep_describe !== false} onChange={x => set('deep_describe', x)} label="Describe again" /><span>{v.deep_describe !== false ? 'On' : 'Off'}</span></div></div>
+            <div className="m2-opt"><div><b>Never generate real people</b><p className="muted">Photos, paintings or drawings of real people, like Gandhiji or a scientist, keep the printed picture, only cleaned up: colour, contrast, sharpness and size. No AI touches the face.</p></div>
+              <div className="m1-bool"><Switch checked={v.people !== 'generate'} onChange={x => set('people', x ? 'keep' : 'generate')} label="Keep real people as printed" /><span>{v.people !== 'generate' ? 'On' : 'Off'}</span></div></div>
           </div>
         </div>
         <div className="card">

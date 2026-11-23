@@ -34,9 +34,29 @@ class ContentMissing(Exception):
             f"({book.content_key}). The book needs to be processed again.")
 
 
-def load(book: Book) -> dict:
+# A live book can be re-uploaded. The new version is processed and reviewed in
+# content_key while students keep reading the published one in live_key; the
+# swap happens on publish. These say which version a reader gets.
+UPDATING = ("processing", "in_review", "rejected")
+
+
+def serving(book: Book) -> bool:
+    """Students can see and read this book now."""
+    return book.status == "live" or (bool(book.live_key) and book.status in UPDATING)
+
+
+def serving_filter():
+    from sqlalchemy import and_, or_
+    return or_(Book.status == "live", and_(Book.live_key != "", Book.live_key.isnot(None), Book.status.in_(UPDATING)))
+
+
+def reader_key(book: Book) -> str:
+    return book.live_key if (book.live_key and book.status != "live") else book.content_key
+
+
+def load(book: Book, key: str | None = None) -> dict:
     try:
-        return json.loads(_store().get(book.content_key + "/book.json"))
+        return json.loads(_store().get((key or book.content_key) + "/book.json"))
     except FileNotFoundError:
         raise ContentMissing(book)
 
@@ -70,6 +90,12 @@ def ingest_flow(db: Session, book: Book, flow_bytes: bytes, log=lambda *a: None)
         src = Path(tmp) / "flow.docx"; src.write_bytes(flow_bytes)
         out = Path(tmp) / "out"
         data, report = convert(src, out, log=log)
+        # What the person uploading said beats what the converter guessed from the front pages.
+        bk = data.get("book") or {}
+        if book.subject and not bk.get("subject"):
+            bk["subject"] = book.subject
+            bk["title"] = " ".join(x for x in [book.subject, f"Standard {bk.get('class') or book.grade}" if (bk.get('class') or book.grade) else ""] if x)
+            (out / "book.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         if not page_numbers(data):
             # Nothing a reviewer could open. Fail the job with a reason rather
             # than hand over a book with no pages.

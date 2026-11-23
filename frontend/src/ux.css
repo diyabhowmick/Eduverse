@@ -227,3 +227,21 @@ body[data-immersive] .main{padding-bottom:0}
 .test{grid-template-columns:minmax(0,1fr) 290px}
 .test-top{min-width:0}.test-top .title{flex:1;min-width:0}
 @media (max-width:900px){.test{grid-template-columns:minmax(0,1fr)}}
+
+/* short laptop screens (768 to 860px tall): the whole menu fits, nothing hides under its footer */
+@media (min-width:901px) and (max-height:860px){
+  .rail .rail-top{padding:12px 16px 8px}
+  .rail .nav{gap:0;padding-top:2px}
+  .rail .nav a{padding-top:5px;padding-bottom:5px;min-height:0}
+  .rail .nav .grp{padding:8px 11px 2px}
+  .rail .rail-foot{padding:8px 12px}
+  .rail .rail-foot .company{display:none}
+}
+@media (min-width:901px) and (max-height:980px){
+  .rail .rail-top{padding:12px 16px 8px}
+  .rail .nav{gap:0;padding-top:2px}
+  .rail .nav a{padding-top:5px;padding-bottom:5px;min-height:0}
+  .rail .nav .grp{padding:8px 11px 2px}
+  .rail .rail-foot{padding:8px 12px}
+  .rail .rail-foot .company{display:none}
+}

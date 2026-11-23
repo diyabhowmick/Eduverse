@@ -4,15 +4,8 @@ import { Link } from 'react-router-dom'
 import { MathText, Ring, Icon } from './ui'
 import './story.css'
 
-// Swap in the EduVerse logo file here when it is final. Until then a wordmark is shown.
-const EDU_LOGO = null // '/brand/eduverse_logo.svg'
-
-export function Brandmark({ small }) {
-  return <div className={'brandmark' + (small ? ' small' : '')}>
-    {EDU_LOGO ? <img src={EDU_LOGO} alt="EduVerse" className="bm-logo" /> : <span className="bm-word">Edu<b>Verse</b></span>}
-    <span className="bm-by">by <img src="/brand/zprox_logo_dark.png" alt="zPROx.AI" /></span>
-  </div>
-}
+export { Brandmark } from './Brandmark'
+import { Brandmark } from './Brandmark'
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 const SPARK = <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" /></svg>
@@ -180,7 +173,7 @@ export function LoginCopy({ eyebrow, head, sub }) {
     {eyebrow && <div className="lc-eyebrow"><i />{eyebrow}</div>}
     <h2>{head}</h2>
     <p>{sub}</p>
-    <div className="lc-foot"><span>Automate everything effortlessly</span><span>EduVerse by zPROx.AI</span></div>
+    <div className="lc-foot"><span className="lc-tag">Textbooks<i />Exam packs<i />AI explanations</span><span>EduVerse by zPROx.AI</span></div>
   </div>
 }
 

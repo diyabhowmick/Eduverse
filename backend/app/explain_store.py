@@ -107,13 +107,16 @@ def generate(db, prompt: str, *, kind: str, user_id=None, book_id=None, term="",
     pv = ai["providers"].get(provider, {"model": "test"})
     usage = {}
     if provider == "mock":
-        text = f"[Test model, not a real answer] {term}: an explanation would appear here."
+        text = (f"Test mode: great question! Once the real AI is switched on, I will answer \"{term}\" right here, in simple words with an example."
+                if kind == "buddy" else f"[Test model, not a real answer] {term}: an explanation would appear here.")
     else:
         from .llm_client import call
         try:
             text = call(provider, pv["model"], prompt, base_url=pv.get("base_url"), api_key=pv.get("api_key") or None, timeout=180, usage=usage)
         except Exception as e:
-            raise HTTPException(502, f"The {provider} model did not answer: {str(e)[:160]}")
+            import logging
+            logging.getLogger("eduverse.ai").warning("AI %s did not answer for %s: %s", provider, term, str(e)[:300])
+            raise HTTPException(502, "Explanations are taking a break right now. Please try again in a few minutes.")
     text = check(text)
     usage.setdefault("prompt", len(prompt) // 4); usage.setdefault("completion", len(text) // 4)
     record(db, kind, pv["model"], usage, user_id, book_id, False, term, where)

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { api } from '../../api'
 import { useLoad, Page, Ring, Icon, Sheet, Field, useToast, plural } from '../../ui'
 import { BookTile, Cover } from './common'
+import EddieBuddy from '../../EddieBuddy'
+import { callName } from '../../callname'
 
 const greet = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening' }
 const daysTo = d => d ? Math.ceil((new Date(d + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000) : null
@@ -18,11 +20,13 @@ function openTest() {
 
 function GoalSheet({ d, onClose, onSaved }) {
   const [goal, setGoal] = useState(d.goal_minutes); const [date, setDate] = useState(d.exam_date); const [err, setErr] = useState('')
+  const [nick, setNick] = useState(d.me.profile?.nickname || '')
   async function save() {
-    try { await api('/api/student/profile', { method: 'PUT', body: { goal_minutes: +goal, exam_date: date || '' } }); onSaved() } catch (e) { setErr(e.message) }
+    try { await api('/api/student/profile', { method: 'PUT', body: { goal_minutes: +goal, exam_date: date || '', nickname: nick } }); onSaved() } catch (e) { setErr(e.message) }
   }
-  return <Sheet title="Your daily goal" onClose={onClose} footer={<button className="btn primary lg block" onClick={save}>Save</button>}>
+  return <Sheet title="You and your goals" onClose={onClose} footer={<button className="btn primary lg block" onClick={save}>Save</button>}>
     {err && <div className="err">{err}</div>}
+    <Field label="What should Eddie call you?" hint="Leave empty to use your first name"><input className="input" value={nick} maxLength={30} onChange={e => setNick(e.target.value)} placeholder={d.me.name.split(' ')[0]} /></Field>
     <Field label="Minutes of study a day"><div className="chips">{[10, 20, 30, 45, 60, 90].map(m => <button key={m} type="button" className={'chip' + (+goal === m ? ' on' : '')} onClick={() => setGoal(m)}>{m} min</button>)}</div></Field>
     <Field label="Exam date (optional)" hint="Home shows a countdown"><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
   </Sheet>
@@ -32,7 +36,7 @@ export default function Home() {
   const { data: d, reload } = useLoad('/api/student/home'); const toast = useToast()
   const [goalOpen, setGoalOpen] = useState(false)
   if (!d) return <Page title="Home"><div className="empty">Loading</div></Page>
-  const first = d.me.name.split(' ')[0]
+  const first = callName(d.me.name, d.me.profile || {})
   const left = daysTo(d.exam_date)
   const running = openTest()
   const c = d.continue, x = d.last_exam
@@ -45,6 +49,7 @@ export default function Home() {
           : <button type="button" className="countdown" onClick={() => setGoalOpen(true)}><Icon n="clock" s={16} />Set your exam date</button>}
       </div>
       <div className="stack">
+        <EddieBuddy d={d} running={running} onGoal={() => setGoalOpen(true)} onNamed={reload} />
         {d.rules.exam_mode && <div className="note" style={{ borderLeft: '3px solid var(--red)' }}><b>{d.rules.exam_mode}</b> is on for your class. Explanations are short and exam focused until it ends.</div>}
 
         {running ? <Link className="hero" to={`/student/exam/${running.bid}?tab=tests`}><div className="hero-body"><div className="k">Test in progress</div><h2>{running.title}</h2>

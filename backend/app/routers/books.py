@@ -44,6 +44,7 @@ def out(b: Book):
     d["cover"] = f"/api/books/{b.id}/cover" if b.cover_key else ""
     d["linked_book_ids"] = b.linked_book_ids or []
     d["track"] = d["track"] or "textbook"
+    d["live_for_students"] = b.status == "live" or (bool(b.live_key) and b.status in ("processing", "in_review", "rejected"))
     return d
 
 
@@ -117,7 +118,9 @@ def transition(bid: int, action: str, db: Session = Depends(get_db), me=Depends(
     b.status = dst
     if dst == "live":
         b.live_at = datetime.utcnow()
+        b.live_key = b.content_key or b.live_key
     if action == "pull_back":
+        b.live_key = ""                       # pulled back on purpose: students stop seeing it
         b.assigned_at = datetime.utcnow()     # the clock restarts
         b.last_opened_at = None
     log(db, me, f"book.{action}", "book", bid, title=b.title)

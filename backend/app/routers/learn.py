@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..config import BASE
 from ..db import get_db, SessionLocal
+from .. import content as C
 from ..models import AiUsage, Book, Explanation, ExplanationVote, PrepJob, Question, QuestionPaper
 from ..security import current_user, require
 from ..audit import log
@@ -155,12 +156,15 @@ def explain(body: ExplainIn, db: Session = Depends(get_db), me=Depends(current_u
         anchor, term, where = f"q:{q.id}", f"Question {q.number}", f"{book.title}, question {q.number}"
     else:
         place = f"kw:{body.keyword_id}" if body.keyword_id else f"blk:{body.block_id}:{X.norm(body.term)}"
-        anchor, term, where = f"book:{book.id}:{book.content_key}:ch{body.chapter}:{place}", body.term.strip()[:200], f"{book.title}, unit {body.chapter}"
+        anchor, term, where = f"book:{book.id}:{C.reader_key(book)}:ch{body.chapter}:{place}", body.term.strip()[:200], f"{book.title}, unit {body.chapter}"
     pool = db.query(Explanation).filter(Explanation.anchor == anchor, Explanation.style == style, Explanation.level == level,
                                         Explanation.status.in_(X.LIVE)).order_by(Explanation.id).all()
 
+    free = parent is not None and level == 2   # the first "go deeper" is free, as the panel promises
+
     def fresh():
-        credits.check()
+        if not free:
+            credits.check()
         if parent:
             prompt = X.deeper_prompt(root, parent, term, who)
         elif scope == "question":
@@ -169,7 +173,8 @@ def explain(body: ExplainIn, db: Session = Depends(get_db), me=Depends(current_u
             chapter_title = next((c.get("title", "") for c in _chapters(book) if c.get("number") == body.chapter), "")
             prompt = X.book_prompt(book, chapter_title, term, body.paragraph[:1500], body.definition[:800], body.figures[:3], style, ai)
         text, model = X.generate(db, prompt, kind="explain", user_id=me.id, book_id=book.id, term=term, where=where)
-        credits.spend(book.id, text)
+        if not free:
+            credits.spend(book.id, text)
         e = Explanation(scope=scope, anchor=anchor, level=level, style=style, lang=book.medium or "English", parent_id=parent.id if parent else None,
                         book_id=book.id, question_id=(q.id if scope == "question" and not parent else None), term=term, text=text, model=model)
         db.add(e); db.flush(); pool.append(e)
@@ -188,7 +193,15 @@ def explain(body: ExplainIn, db: Session = Depends(get_db), me=Depends(current_u
     elif pool:
         e = X.choose(pool)
     else:
-        e, cached = fresh(), False
+        try:
+            e, cached = fresh(), False
+        except HTTPException as ex:
+            # The model is down. If the book itself defines the word, show that instead of an error.
+            if ex.status_code in (502, 503) and not parent and body.definition.strip():
+                db.rollback()
+                return {**_out(db, None, me, credits, text=body.definition.strip(), level=level, live=True, term=term), "from_book": True,
+                        "note": "Explanations are taking a break, so here is what your book says."}
+            raise
     e.shown += 1
     if cached:
         X.record(db, "explain", e.model, None, me.id, book.id, True, term, where)
@@ -200,7 +213,7 @@ def explain(body: ExplainIn, db: Session = Depends(get_db), me=Depends(current_u
 def _chapters(book: Book) -> list:
     from .. import content as C
     try:
-        return C.load(book).get("chapters", [])
+        return C.load(book, C.reader_key(book)).get("chapters", [])
     except Exception:
         return []
 
@@ -450,3 +463,33 @@ def usage(days: int = 30, db: Session = Depends(get_db), _=Depends(sa)):
             "confusion": [{"term": t, "where": w, "book": books.get(b, ""), "taps": n} for (t, w, b), n in taps.most_common(25)],
             "explanations": {"total": sum(ex.values()), **ex},
             "flagged": [ex_out(e) for e in db.query(Explanation).filter(Explanation.status == "flagged").order_by(Explanation.id.desc()).limit(50)]}
+
+
+# ---------------- Eddie, the study buddy on the student home page ----------------
+class BuddyIn(BaseModel):
+    question: str
+    context: str = ""          # what Home already shows: name, class, books, today's plan
+    history: list[dict] = []   # the last few turns, [{"who": "me"|"eddie", "text": ...}]
+
+
+@router.post("/buddy")
+def buddy(body: BuddyIn, db: Session = Depends(get_db), me=Depends(current_user)):
+    q = body.question.strip()[:400]
+    if not q:
+        raise HTTPException(422, "Ask Eddie something")
+    credits = Credits(db, me)
+    credits.check()
+    turns = "\n".join(f"{'Student' if t.get('who') == 'me' else 'Eddie'}: {str(t.get('text', ''))[:300]}" for t in body.history[-6:])
+    prompt = f"""You are Eddie, a cheerful little robot study buddy inside EduVerse, talking out loud with a school student.
+What you know about them and what is on their screen: {body.context[:3600]}
+{('Conversation so far:' + chr(10) + turns) if turns else ''}
+Student: {q}
+
+Reply as Eddie in under 90 words, warm and encouraging, like a friendly older sibling who is good at studies.
+Your reply is read aloud, so write plain spoken sentences: no lists, no markdown, no LaTeX, no emojis; say maths in words (\"x squared plus one\").
+If they ask about \"this part\" or \"this unit\", use the text on their screen. You know each figure through its written description: explain it as if pointing at it (\"the dotted line in the middle is the normal\"), but only mention parts, labels and values the description gives. If it is a study doubt, explain it simply with one everyday example. If it is about what to study, use their plan above.
+If it is not about studies, answer kindly in a line and steer back to learning. Never invent marks, dates or facts about the student."""
+    text, _m = X.generate(db, prompt, kind="buddy", user_id=me.id, term=q[:200], where="Eddie on Home")
+    credits.spend(None, text)
+    db.commit()
+    return {"text": text.replace("$", "").strip(), "credits_left": credits.left()}

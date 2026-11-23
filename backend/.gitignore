@@ -1,0 +1,2 @@
+voice_models/*.onnx
+voice_models/*.bin

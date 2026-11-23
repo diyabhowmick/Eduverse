@@ -81,7 +81,7 @@ def queue(db: Session = Depends(get_db), me=Depends(reviewer)):
 @router.get("/history")
 def history(db: Session = Depends(get_db), _=Depends(reviewer)):
     return [{"id": b.id, "title": b.title, "board": b.board, "grade": b.grade, "status": b.status, "reviewed_by": b.reviewed_by,
-             "reviewed_at": b.reviewed_at, "review_note": b.review_note}
+             "reviewed_at": b.reviewed_at, "review_note": b.review_note, "has_content": bool(b.content_key)}
             for b in db.query(Book).filter(Book.reviewed_at.isnot(None)).order_by(Book.reviewed_at.desc())]
 
 
@@ -112,7 +112,8 @@ def book(bid: int, db: Session = Depends(get_db), me=Depends(reviewer)):
             "chapters": [{"number": c["number"], "title": c["title"], "partial": c.get("partial", False), "keywords": len(c["keywords"])} for c in data["chapters"]],
             "toc": data["toc"], "pages": pages, "progress": progress(db, bid), "report": {k: rep.get(k) for k in ("blocks", "figures", "sections", "ledger")},
             "flags": rep.get("needs_review", []), "m2": C.load_extra(b, "m2_report.json"), "to_choose": sum(choose.values()),
-            "flag_options": flag_options()}
+            "flag_options": flag_options(), "missing_pages": missing_pages(db, b), "updating_live": bool(b.live_key) and b.status != "live",
+            "review_note": b.review_note, "reviewed_by": b.reviewed_by, "reviewed_at": b.reviewed_at}
 
 
 @router.get("/books/{bid}/pages/{page}")
@@ -274,6 +275,28 @@ def choose_figure(bid: int, block_id: str, body: FigureChoice, db: Session = Dep
     return {"id": block_id, "image": blk["image"], "m2": rec}
 
 
+@router.post("/books/{bid}/figures/{block_id}/enhance")
+def enhance_figure(bid: int, block_id: str, db: Session = Depends(get_db), me=Depends(reviewer)):
+    """Clean up the printed picture itself, with no AI: colour, contrast, sharpness and size. Offered for every figure."""
+    from .. import m2
+    b = get_book(db, bid, me); editable(b)
+    data = C.load(b); blk = figure_block(data, block_id)
+    prev = blk.get("m2") or {}
+    original = prev.get("original") or blk["image"]
+    n = int(prev.get("version", 0)) + 1
+    src = C._store().get(f"{b.content_key}/{original}")
+    key = f"images/m2/{m2._stem(blk)}_v{n}_clean.png"
+    C._store().put(f"{b.content_key}/{key}", m2.enhance(src, photo=((blk.get("desc") or {}).get("type") or "photo") != "diagram"))
+    rec = {"original": original, "choice": "pending", "at": datetime.utcnow().isoformat(timespec="seconds"), "kind": (blk.get("desc") or {}).get("type", ""),
+           "status": "generated", "method": "enhance", "image": key, "error": "", "prompt": "", "version": n,
+           "note": "The printed picture, cleaned up with no AI: colour, contrast, sharpness and size."}
+    m2.apply(blk, rec); blk["image"] = original
+    C.save(b, data)
+    log(db, me, "review.figure_enhance", "book", bid, block=block_id)
+    db.commit()
+    return {"id": block_id, "m2": rec}
+
+
 @router.post("/books/{bid}/figures/{block_id}/regenerate")
 def regenerate_figure(bid: int, block_id: str, body: Regenerate, db: Session = Depends(get_db), me=Depends(reviewer)):
     """Draw the figure again, from the description as the reviewer left it."""
@@ -389,13 +412,33 @@ def approve_remaining(bid: int, db: Session = Depends(get_db), me=Depends(review
     return {"approved": n, "held": held, "progress": progress(db, bid)}
 
 
+def missing_pages(db, b: Book) -> list[int]:
+    """Pages of the original that had content but never made it into the review list."""
+    flow = C.load_extra(b, "flow_pages.json") or {}
+    have = {r.page for r in db.query(ReviewPage).filter(ReviewPage.book_id == b.id)}
+    return sorted(int(p) for p, items in flow.items() if str(p).isdigit() and items and int(p) not in have)
+
+
+def page_list(pages: list[int]) -> str:
+    out, i = [], 0
+    while i < len(pages):
+        j = i
+        while j + 1 < len(pages) and pages[j + 1] == pages[j] + 1:
+            j += 1
+        out.append(str(pages[i]) if i == j else f"{pages[i]}, {pages[j]}" if j == i + 1 else f"{pages[i]} to {pages[j]}"); i = j + 1
+    return ", ".join(out)
+
+
 @router.post("/books/{bid}/publish")
 def publish(bid: int, body: Decision, db: Session = Depends(get_db), me=Depends(reviewer)):
     b = get_book(db, bid, me); editable(b)
     p = progress(db, bid)
     if p["total"] == 0 or p["approved"] != p["total"]:
         raise HTTPException(409, f"Every page must be approved first: {p['approved']} of {p['total']} approved, {p['rejected']} rejected")
-    b.status, b.live_at = "live", datetime.utcnow()
+    missing = missing_pages(db, b)
+    if missing:
+        raise HTTPException(409, f"Pages {page_list(missing)} of the uploaded book are not in the digital book, so nobody has reviewed them. Send the book back so it can be converted again.")
+    b.status, b.live_at, b.live_key = "live", datetime.utcnow(), b.content_key
     b.reviewed_by, b.reviewed_at, b.review_note = me.email, datetime.utcnow(), body.comment.strip()
     log(db, me, "review.publish", "book", bid, title=b.title, pages=p["total"])
     db.commit()
@@ -424,9 +467,13 @@ def content_file(bid: int, path: str, db: Session = Depends(get_db)):
     b = db.get(Book, bid)
     if not b or not b.content_key:
         raise HTTPException(404, "Not found")
-    try:
-        data = C._store().get(f"{b.content_key}/{path}")
-    except Exception:
+    data = None
+    for key in dict.fromkeys(k for k in (b.content_key, b.live_key) if k):  # the version in review, then the live one
+        try:
+            data = C._store().get(f"{key}/{path}"); break
+        except Exception:
+            continue
+    if data is None:
         raise HTTPException(404, "Not found")
     ext = path.rsplit(".", 1)[-1].lower()
     return Response(data, media_type={"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml"}.get(ext, "application/octet-stream"),

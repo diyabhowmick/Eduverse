@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { api } from '../../api'
 import ExplainPanel from '../../ExplainPanel'
+import ReaderEddie from '../../ReaderEddie'
+import { EddieBot } from '../../Eddie'
 import { Sheet, Icon, useNarrow } from '../../ui'
 
 const SIZES = [['15.5px', 'Small'], ['17.5px', 'Medium'], ['19.5px', 'Large'], ['22px', 'Extra large']]
@@ -32,7 +34,7 @@ function Text({ text, marks, onWord }) {
   out.push(text.slice(at)); return out
 }
 
-function Blk({ b, bookId, onWord }) {
+function Blk({ b, bookId, onWord, onFig }) {
   const a = { 'data-sec': b.section, id: b.id }
   switch (b.type) {
     case 'heading': return b.level === 3 ? <h3 className="sec" {...a}><span className="n">{b.number}</span>{b.text}</h3> : <h2 className="sec" {...a}>{b.number && <span className="n">{b.number}</span>}{b.text}</h2>
@@ -40,10 +42,12 @@ function Blk({ b, bookId, onWord }) {
     case 'paragraph': return <p {...a}><Text text={b.text} marks={b.marks} onWord={onWord} />{(b.math || []).map((m, i) => <span key={i} dangerouslySetInnerHTML={{ __html: tex(m) }} />)}</p>
     case 'list': { const L = b.ordered ? 'ol' : 'ul'; return <L {...a}>{b.items.map((it, i) => <li key={i}><Text text={it.text} marks={it.marks} onWord={onWord} /></li>)}</L> }
     case 'equation': return <div className="eq" {...a} dangerouslySetInnerHTML={{ __html: b.latex.map(tex).join('') }} />
-    case 'figure': return <figure {...a}><img src={`/api/content/${bookId}/${b.image}`} alt={b.desc?.summary || b.caption} loading="lazy" onClick={e => e.currentTarget.classList.toggle('big')} />{(b.caption || b.number) && <figcaption>{b.number && <b>Figure {b.number} </b>}{b.caption}</figcaption>}</figure>
+    case 'figure': return <figure {...a}><img src={`/api/content/${bookId}/${b.image}`} alt={b.desc?.summary || b.caption} loading="lazy" onClick={e => e.currentTarget.classList.toggle('big')} />
+      <figcaption>{b.number && <b>Figure {b.number} </b>}{b.caption}
+        {onFig && <button type="button" className="fig-ask" onClick={() => onFig(b)} title="Ask Eddie about this figure"><EddieBot size={18} jet={false} />Ask Eddie</button>}</figcaption></figure>
     case 'table': return <div className="tbl" {...a}>{(b.caption || b.number) && <div className="tcap"><b>{b.label || 'Table'} {b.number}</b> {b.caption}</div>}<table><tbody>{b.rows.map((r, i) => <tr key={i}>{r.map((c, j) => i === 0 ? <th key={j}>{c}</th> : <td key={j}>{c}</td>)}</tr>)}</tbody></table></div>
     case 'marker': return null
-    case 'box': return <div className={'box ' + b.kind} {...a}><div className="bt">{b.title}</div>{b.children.map(c => <Blk key={c.id} b={c} bookId={bookId} onWord={onWord} />)}</div>
+    case 'box': return <div className={'box ' + b.kind} {...a}><div className="bt">{b.title}</div>{b.children.map(c => <Blk key={c.id} b={c} bookId={bookId} onWord={onWord} onFig={onFig} />)}</div>
     default: return null
   }
 }
@@ -51,15 +55,16 @@ function Blk({ b, bookId, onWord }) {
 function figuresOf(ch) { const out = []; const w = bs => bs.forEach(b => { if (b.type === 'figure') out.push(b); if (b.type === 'box') w(b.children) }); w(ch.blocks); return out }
 
 export default function Reader() {
-  const { id } = useParams()
+  const { id } = useParams(); const [sp] = useSearchParams()
   const [bk, setBk] = useState(null); const [err, setErr] = useState('')
   const [chNo, setChNo] = useState(null); const [cur, setCur] = useState(null)
+  const [figAsk, setFigAsk] = useState(null)
   const [sel, setSel] = useState(null); const [selBtn, setSelBtn] = useState(null)
   const [look, setLookState] = useState(loadLook); const [lookOpen, setLookOpen] = useState(false)
   const setLook = l => { setLookState(l); localStorage.setItem('ev_reader', JSON.stringify(l)) }
   const narrow = useNarrow(1000)
   const pageRef = useRef(); const lastPing = useRef(Date.now()); const curRef = useRef(null)
-  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); setChNo(b.progress.position?.chapter || b.chapters[0]?.number) }).catch(e => setErr(e.message)) }, [id])
+  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); const qc = sp.get('ch'); setChNo(qc != null && b.chapters.some(c => String(c.number) === qc) ? +qc : (b.progress.position?.chapter ?? b.chapters[0]?.number)) }).catch(e => setErr(e.message)) }, [id])
   const ch = useMemo(() => bk?.chapters.find(c => c.number === chNo), [bk, chNo])
   const kws = useMemo(() => Object.fromEntries((ch?.keywords || []).map(k => [k.id, k])), [ch])
   // progress: on topic change and every 30 seconds while reading
@@ -73,7 +78,9 @@ export default function Reader() {
   useEffect(() => {
     if (!ch || !pageRef.current) return
     const pos = bk.progress.position
-    if (pos?.chapter === ch.number && pos.section) scrollToSec(pageRef.current, pos.section); else pageRef.current.scrollTop = 0
+    const qs = sp.get('sec')
+    if (qs && String(ch.number) === sp.get('ch')) { setTimeout(() => { scrollToSec(pageRef.current, qs); pageRef.current?.querySelectorAll(`[data-sec="${qs}"]`).forEach(e => { e.classList.add('flash'); setTimeout(() => e.classList.remove('flash'), 2400) }) }, 60) }
+    else if (pos?.chapter === ch.number && pos.section) scrollToSec(pageRef.current, pos.section); else pageRef.current.scrollTop = 0
     onScroll()
   }, [ch])
   function onScroll() {
@@ -112,21 +119,24 @@ export default function Reader() {
       <nav className="srail">
         <Link to="/student" className="btn ghost sm">My books</Link>
         <div className="sbook">{bk.title}<div className="bar-track" style={{ marginTop: 6 }}><i style={{ width: bk.progress.percent + '%' }} /></div><span className="muted" style={{ fontSize: 12 }}>{bk.progress.percent}% of the book read</span></div>
-        <select className="input" value={chNo} onChange={e => setChNo(+e.target.value)}>{bk.chapters.map(c => <option key={c.number} value={c.number}>Unit {c.number}: {c.title}</option>)}</select>
+        <select className="input" value={chNo} onChange={e => setChNo(+e.target.value)}>{bk.chapters.map(c => <option key={c.number} value={c.number}>{c.number ? `Unit ${c.number}: ` : ''}{c.title}</option>)}</select>
         <div className="stopics">{secs.map(s => { const sep = tail(s) && !sepShown; if (sep) sepShown = true; return <div key={s.id}>{sep && <div className="sep" />}
           <a className={'l' + s.level + (cur === s.id ? ' cur' : '') + (bk.progress.sections.includes(s.id) ? ' done' : '')} onClick={() => scrollToSec(pageRef.current, s.id)}>
             {s.number && <span className="num">{s.number}</span>}{s.title}</a></div> })}</div>
       </nav>
       <article className={'spage ' + look.theme} style={{ '--rs': look.size, '--rl': look.lead }} ref={pageRef} onScroll={onScroll} onMouseUp={onMouseUp}>
         <div className="rbar"><Link to="/student" className="btn ghost sm" aria-label="Back to home"><Icon n="left" s={18} /></Link>
-          <select className="input" aria-label="Chapter" value={chNo} onChange={e => setChNo(+e.target.value)}>{bk.chapters.map(c => <option key={c.number} value={c.number}>Unit {c.number}: {c.title}</option>)}</select>
+          <select className="input" aria-label="Chapter" value={chNo} onChange={e => setChNo(+e.target.value)}>{bk.chapters.map(c => <option key={c.number} value={c.number}>{c.number ? `Unit ${c.number}: ` : ''}{c.title}</option>)}</select>
           <button className="btn ghost sm" onClick={() => setLookOpen(true)} aria-label="Reading comfort"><Icon n="text" s={18} /></button></div>
         <div className="inner">
-          <div className="chap-head"><span className="u">Unit {ch.number}</span><h1>{ch.title}</h1><span className="muted">Tap a highlighted word to have it explained, or select any words.</span>
+          <div className="chap-head"><span className="u">{ch.number ? `Unit ${ch.number}` : 'Before Unit 1'}</span><h1>{ch.title}</h1><span className="muted">Tap a highlighted word to have it explained, or select any words.</span>
             <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setLookOpen(true)}><Icon n="text" s={16} />Text size and colour</button></div>
-          {ch.blocks.map(b => <Blk key={b.id} b={b} bookId={id} onWord={onWord} />)}
+          {ch.blocks.map(b => <Blk key={b.id} b={b} bookId={id} onWord={onWord} onFig={f => setFigAsk({ f, n: Date.now() })} />)}
           <div className="chap-end">
-            <div style={{ flex: 1, minWidth: 200 }}><b>End of unit {ch.number}</b><div className="muted" style={{ fontSize: 13 }}>{bk.practice_packs?.length ? 'Check what stayed with you: try past exam questions from this chapter.' : 'Well done. On to the next one.'}</div></div>
+            <div style={{ flex: 1, minWidth: 200 }}><b>End of unit {ch.number}</b><div className="muted" style={{ fontSize: 13 }}>{bk.tests?.[ch.number] ? 'Check what stayed with you. Eddie will go through anything you miss.' : bk.practice_packs?.length ? 'Check what stayed with you: try past exam questions from this chapter.' : 'Well done. On to the next one.'}</div></div>
+            {bk.tests?.[ch.number] > 0 && <div className="chap-test"><EddieBot size={34} jet={false} />
+              <Link className="btn primary" to={`/student/test/${id}/${ch.number}?level=quick`}>Quick check ({Math.min(5, bk.tests[ch.number])})</Link>
+              {bk.tests[ch.number] > 5 && <Link className="btn" to={`/student/test/${id}/${ch.number}?level=chapter`}>Chapter test ({Math.min(15, bk.tests[ch.number])})</Link>}</div>}
             {bk.practice_packs?.map(p => p.owned ? <Link key={p.id} className="btn" to={`/student/exam/${p.id}?tab=practice&chapter=${encodeURIComponent(ch.title)}`}>Practise this chapter</Link>
               : <Link key={p.id} className="btn" to="/student/store">Get {p.title} to practise</Link>)}
             {bk.chapters.find(c => c.number > ch.number) && <button className="btn primary lg inline" onClick={() => setChNo(bk.chapters.find(c => c.number > ch.number).number)}>Next unit<Icon n="right" s={18} /></button>}</div>
@@ -146,6 +156,9 @@ export default function Reader() {
         {sel.definition && <div className="scard" style={{ marginBottom: 12 }}><div className="h">What your book says</div>{sel.definition}</div>}
         <ExplainPanel key={sel.key} styles={bk.rules.allowed_depths} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
           term: sel.term, paragraph: sel.paragraph, definition: sel.definition, figures: sel.figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')) }} /></Sheet>}
+      <ReaderEddie bk={bk} ch={ch} section={ch.sections.find(s => s.id === cur)} focus={figAsk} bookId={id}
+        figures={() => figuresOf(ch).filter(f => f.section === (cur || ch.sections[0]?.id))}
+        sectionText={() => [...(pageRef.current?.querySelectorAll(`[data-sec="${cur || ch.sections[0]?.id}"]`) || [])].map(e => e.innerText).join(' ').replace(/\s+/g, ' ')} />
       {lookOpen && <LookSheet look={look} set={setLook} onClose={() => setLookOpen(false)} />}
       {selBtn && <button className="selbtn" style={{ left: selBtn.x, top: selBtn.y }} onMouseDown={e => { e.preventDefault(); explain(selBtn.t, selBtn.para, '', [], null, selBtn.block); setSelBtn(null); getSelection().removeAllRanges() }}>Explain</button>}
     </div>

@@ -1,9 +1,9 @@
 const KEY = 'ev_token'
 export const auth = {
   get token() { return localStorage.getItem(KEY) },
-  set(t, user) { localStorage.setItem(KEY, t); localStorage.setItem('ev_user', JSON.stringify(user)) },
+  set(t, user) { localStorage.setItem(KEY, t); localStorage.setItem('ev_user', JSON.stringify(user)); localStorage.removeItem('ev_nick') },
   user() { try { return JSON.parse(localStorage.getItem('ev_user')) } catch { return null } },
-  clear() { localStorage.removeItem(KEY); localStorage.removeItem('ev_user') },
+  clear() { localStorage.removeItem(KEY); localStorage.removeItem('ev_user'); localStorage.removeItem('ev_nick') },
 }
 
 export const LOGIN = { super_admin: '/login/superadmin', admin: '/login/admin', reviewer: '/login/reviewer', student: '/login/student', teacher: '/login/teacher' }

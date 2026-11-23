@@ -23,7 +23,7 @@ function Editable({ value, multiline = true, onSave, children }) {
     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}><button className="btn primary sm" onClick={async () => { if (await onSave(v)) setEdit(false) }}>Save</button><button className="btn sm" onClick={() => { setV(value); setEdit(false) }}>Cancel</button></div></div>
 }
 
-const METHOD = { svg: 'SVG redraw', openai: 'OpenAI', gemini: 'Gemini', local: 'Local model' }
+const METHOD = { svg: 'SVG redraw', openai: 'OpenAI', gemini: 'Gemini', local: 'Local model', enhance: 'No AI' }
 
 function FigureM2({ b, bookId, act }) {
   const m = b.m2; const [edit, setEdit] = useState(false); const [desc, setDesc] = useState(b.desc?.summary || ''); const [busy, setBusy] = useState(false)
@@ -36,13 +36,15 @@ function FigureM2({ b, bookId, act }) {
   return <>
     {made ? <div className="m2-cmp">
       <figure className={m.choice === 'original' ? 'on' : ''}><figcaption>Original from the book</figcaption><img src={`/api/content/${bookId}/${m.original}`} alt="Original figure" /></figure>
-      <figure className={m.choice === 'generated' ? 'on' : ''}><figcaption>New, from the description<span className="muted">{METHOD[m.method] || m.method}{m.model ? ' ' + m.model : ''}</span></figcaption><img src={`/api/content/${bookId}/${m.image}`} alt="Regenerated figure" /></figure>
+      <figure className={m.choice === 'generated' ? 'on' : ''}><figcaption>{m.method === 'enhance' ? 'Original, cleaned up' : m.mode === 'replica' ? 'Exact clean copy' : 'New, from the description'}<span className="muted">{METHOD[m.method] || m.method}{m.model ? ' ' + m.model : ''}</span></figcaption><img src={`/api/content/${bookId}/${m.image}`} alt="Regenerated figure" /></figure>
     </div> : <img className="rv-img" src={`/api/content/${bookId}/${b.image}`} alt="" />}
     <div className="m2-bar">{pill}
       {made && m.choice !== 'generated' && <button className="btn primary sm" onClick={() => choose('generated')}>Use new picture</button>}
       {made && m.choice !== 'original' && <button className="btn sm" onClick={() => choose('original')}>Keep original</button>}
       <button className="btn ghost sm" onClick={() => setEdit(e => !e)}>{made ? 'Edit description and redraw' : 'Describe and draw'}</button>
+      <button className="btn ghost sm" disabled={busy} onClick={async () => { setBusy(true); await act(() => api(url + '/enhance', { method: 'POST' }), 'Cleaned-up copy made. Choose which one students see.'); setBusy(false) }}>Clean up original (no AI)</button>
       {!made && m && <span className="m2-err">M2: {m.error || 'no new picture'}</span>}</div>
+    {m?.note && <div className="m2-note">{m.note}</div>}
     {edit && <div className="rv-editbox" style={{ marginTop: 8 }}><textarea className="input" rows="5" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Describe the figure: layout, every part, labels" />
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}><button className="btn primary sm" disabled={busy || !desc.trim()} onClick={() => redraw({ summary: desc })}>{busy ? 'Drawing' : 'Redraw from this description'}</button>
         <button className="btn sm" onClick={() => setEdit(false)}>Cancel</button></div></div>}
@@ -122,23 +124,28 @@ export default function Workspace() {
   const p = book.progress; const allOk = p.total && p.approved === p.total
   const cur = book.pages[idx]
   return (
-    <div className="rv">
+    <div className={'rv' + (book.status === 'in_review' ? '' : ' ro')}>
       <div className="rv-top">
         <Link to={home} className="btn ghost sm">{sa ? 'Catalogue' : 'Queue'}</Link>
         <div><b>{book.title}</b><div className="muted" style={{ fontSize: 12 }}>{book.board}, Class {book.grade}. Detected from the file: {book.detected.title}</div></div>
+        {!sa && <Link to={'/review/tests/' + book.id} className="btn sm">Chapter tests</Link>}
         <div className="rv-prog"><div className="bar-track" style={{ width: 180 }}><i style={{ width: (p.approved / Math.max(1, p.total) * 100) + '%' }} /></div><span className="muted">{p.approved} of {p.total} pages approved{p.rejected ? `, ${p.rejected} rejected` : ''}{book.to_choose ? `, ${book.to_choose} pictures to choose` : ''}</span></div>
-        {book.status === 'in_review' ? <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        {book.status === 'in_review' ? <div className="rv-acts">
           <button className="btn sm" onClick={() => setFinal('back')}>Send back</button>
           <button className="btn sm" disabled={!p.pending} onClick={async () => (await ask(`Approve the ${p.pending} pages still pending?`, { yes: 'Approve' })) && act(() => api(`/api/review/books/${id}/approve-all-remaining`, { method: 'POST' }), null, r => toast(r.held.length ? `${r.approved} pages approved. Still to choose a picture on page ${r.held.join(', ')}` : `${r.approved} pages approved`, !!r.held.length))}>Approve remaining</button>
-          <button className="btn primary sm" disabled={!allOk} title={allOk ? '' : 'Approve every page first'} onClick={() => setFinal('publish')}>Approve and publish</button>
-        </div> : <div style={{ marginLeft: 'auto' }} className="muted">Read only — this book is not in review</div>}
+          <button className="btn primary sm" disabled={!allOk || book.missing_pages?.length > 0} title={book.missing_pages?.length ? 'Some pages are missing from the digital book' : allOk ? '' : 'Approve every page first'} onClick={() => setFinal('publish')}>Approve and publish</button>
+        </div> : <div style={{ marginLeft: 'auto' }} className="muted">Read only: this book is not in review</div>}
       </div>
+      {book.missing_pages?.length > 0 && <div className="rv-note bad">Pages {book.missing_pages.join(', ')} of the uploaded file are not in the digital book, so they cannot be reviewed. Send the book back so it can be converted again.</div>}
+      {book.status === 'rejected' && <div className="rv-note bad"><b>Sent back</b>{book.reviewed_by ? ` by ${book.reviewed_by}` : ''}{book.reviewed_at ? ` on ${new Date(book.reviewed_at + 'Z').toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}{book.review_note ? `: ${book.review_note.replace(/\.+$/, '')}` : ''}. Every page can still be opened here; changes are made after Super Admin runs it again.</div>}
+      {book.status === 'live' && <div className="rv-note">Published{book.reviewed_by ? ` by ${book.reviewed_by}` : ''}. This is the version students read.</div>}
+      {book.updating_live && <div className="rv-note">{book.status === 'in_review' ? 'This is a new version of a live book. Students keep reading the published version until you publish this one.' : 'Students are still reading the published version of this book.'}</div>}
       <div className="rv-body">
         <nav className="rv-pages">{book.pages.map(x => <button key={x.page} className={'rv-p ' + x.status + (x.page === page ? ' cur' : '')} onClick={() => setPage(x.page)} title={`Page ${x.page}${x.flags ? `, ${x.flags} flagged` : ''}`}>
           {x.page}{x.choose ? <i className="m2" title={`${x.choose} pictures to choose`}>{x.choose}</i> : x.flags ? <i>{x.flags}</i> : null}</button>)}</nav>
         <section className="rv-col"><div className="rv-colh">Original page {page}<span className="muted">{pg?.original.pdf ? 'Uploaded PDF' : 'M1 extraction'}</span></div>
           <div className="rv-scroll">{pg ? <Original bookId={id} page={page} orig={pg.original} /> : <div className="empty">{pageErr ? 'Page ' + page + ' could not be loaded: ' + pageErr : 'Loading'}</div>}</div></section>
-        <section className="rv-col"><div className="rv-colh">Digital book, page {page}<span className="muted">{pg?.chapters.map(c => `Unit ${c.number} ${c.title}`).join(', ')}</span></div>
+        <section className="rv-col"><div className="rv-colh">Digital book, page {page}<span className="muted">{pg?.chapters.map(c => (c.number ? `Unit ${c.number} ` : 'Opening pages: ') + c.title).join(', ')}</span></div>
           <div className="rv-scroll rv-digital">{pg?.chapters.flatMap(c => c.blocks).map(b => <Block key={b.id} b={b} kws={kws} bookId={id} onChange={change} onRemove={remove} act={act} />)}
             {pg && !pg.chapters.length && <div className="empty">This page has no reading content (front matter or removed items only)</div>}</div></section>
         <aside className="rv-side">
@@ -157,8 +164,8 @@ export default function Workspace() {
           <div className="rv-card"><div className="h">Important words on this page</div>
             <div className="chips">{onPageKws.map(k => <span key={k.id} className="chip on">{k.term}<button className="rv-chipx" title="Stop highlighting" onClick={() => act(() => api(`/api/review/books/${id}/keywords/${k.id}`, { method: 'DELETE' }), `${k.term} no longer highlighted`)}>×</button></span>)}
               {!onPageKws.length && <span className="muted">None highlighted here</span>}</div>
-            {chapterNo && <form onSubmit={e => { e.preventDefault(); word.trim() && act(() => api(`/api/review/books/${id}/keywords`, { method: 'POST', body: { chapter: chapterNo, term: word } }), `${word} highlighted`, () => setWord('')) }} style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-              <input className="input" placeholder={`Add a word to Unit ${chapterNo}`} value={word} onChange={e => setWord(e.target.value)} /><button className="btn sm">Add</button></form>}</div>
+            {chapterNo != null && book.status === 'in_review' && <form onSubmit={e => { e.preventDefault(); word.trim() && act(() => api(`/api/review/books/${id}/keywords`, { method: 'POST', body: { chapter: chapterNo, term: word } }), `${word} highlighted`, () => setWord('')) }} style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+              <input className="input" placeholder={chapterNo ? `Add a word to Unit ${chapterNo}` : 'Add a word to the opening pages'} value={word} onChange={e => setWord(e.target.value)} /><button className="btn sm">Add</button></form>}</div>
           {pg?.removed.length > 0 && <div className="rv-card"><div className="h">Removed by the converter ({pg.removed.length})</div>{pg.removed.map((r, i) => <div key={i} className="rv-flag"><span className="muted">{r.what}:</span> {r.text || 'image'}</div>)}</div>}
         </aside>
       </div>

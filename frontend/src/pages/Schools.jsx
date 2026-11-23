@@ -55,7 +55,7 @@ export default function Schools() {
               <td>{s.plan || <span className="muted">None</span>}{s.discount && <div className="muted">{s.discount}</div>}</td>
               <td style={{ minWidth: 150 }}><div className="bar-track"><i style={{ width: Math.min(100, s.students / Math.max(1, s.seats) * 100) + '%' }} /></div><div className="muted">{num(s.students)} of {num(s.seats)} seats</div></td>
               <td className="num">{inr(s.annual_value)}</td><td><Tag s={s.status} /></td>
-              <td className="acts"><button className="btn ghost sm" onClick={() => setEdit(s)}>Edit</button><button className="btn ghost sm" style={{ color: 'var(--red)' }} onClick={() => setDel(s)}>Delete</button></td>
+              <td className="acts"><button className="btn ghost sm" onClick={() => setEdit(s)}>Edit</button><button className="btn ghost sm" style={{ color: 'var(--red)' }} disabled={s.students > 0} title={s.students > 0 ? 'It still has students. Move or remove them first, or suspend the organisation instead.' : 'Delete this organisation'} onClick={() => setDel(s)}>Delete</button></td>
             </tr>))}</tbody></table>
         {data && !data.length && <div className="empty">No organisations yet. Add one to sell seats.</div>}
       </div>

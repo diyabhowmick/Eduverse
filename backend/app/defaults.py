@@ -64,7 +64,7 @@ M2 = {
     "provider": "openai",     # openai | gemini | local
     "providers": {
         "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-image-1", "api_key": "", "quality": "medium"},
-        "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta", "model": "imagen-4.0-generate-001", "api_key": ""},
+        "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta", "model": "gemini-2.5-flash-image", "api_key": ""},
         "local": {"base_url": "http://localhost:7860", "model": "", "api_key": "", "steps": 25},
     },
     "svg_redraw": True,       # diagrams, charts and maps M1 read as a structure are redrawn as SVG, no model
@@ -73,6 +73,10 @@ M2 = {
     "style_prompt": ("Clean, accurate illustration for a school science textbook. Plain white background, "
                      "flat colours, clear outlines, nothing decorative, no watermark, no border. "
                      "Draw only what the description says; do not add objects, people or text that are not in it."),
+    "replica": True,          # send the original picture to the image model too, and ask for an exact clean copy
+    "deep_describe": True,    # describe each figure again with a strong vision model before drawing it
+    "describe_models": {"openai": "gpt-4.1", "gemini": "gemini-2.5-flash"},
+    "people": "keep",         # photos or drawings of real people are never generated: keep the printed one, cleaned up
     "size": "auto",           # auto follows the original's shape, or e.g. 1024x1024
     "max_images_per_book": 100,
     "timeout_s": 180,

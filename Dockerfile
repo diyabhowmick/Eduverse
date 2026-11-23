@@ -23,6 +23,15 @@ WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 
+# Eddie's own voice (Kokoro, CPU). Build with --build-arg EDDIE_VOICE=0 to leave it out; the app then uses the phone's voice.
+ARG EDDIE_VOICE=1
+COPY backend/requirements-voice.txt backend/requirements-voice.txt
+COPY scripts/get_voice_model.sh scripts/get_voice_model.sh
+RUN if [ "$EDDIE_VOICE" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ffmpeg curl libsndfile1 && rm -rf /var/lib/apt/lists/* \
+      && pip install -r backend/requirements-voice.txt \
+      && EDDIE_VOICE_DIR=/app/backend/voice_models sh scripts/get_voice_model.sh; fi
+
 COPY backend/ backend/
 COPY m1/ m1/
 COPY converter/ converter/

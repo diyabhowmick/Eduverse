@@ -12,13 +12,14 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
   const [collapsed, setCollapsed] = useState(localStorage.getItem('ev_rail') === '1')
   const [theme, setTheme] = useState(localStorage.getItem('ev_theme') || 'light')
   const [more, setMore] = useState(false)
+  const [peek, setPeek] = useState(false)   // pages that keep the menu narrow (the reader) can still open it for a moment
   const go = useNavigate(); const loc = useLocation(); const user = auth.user()
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('ev_theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('ev_rail', collapsed ? '1' : '0') }, [collapsed])
-  useEffect(() => { setMore(false) }, [loc.pathname])
+  useEffect(() => { setMore(false); setPeek(false) }, [loc.pathname])
   const items = nav.filter(n => n[0] !== '__group')
   // Exact match first, then the deepest section the page sits under; detail pages that belong to no section get a plain label.
-  const DETAIL = { exam: 'Exam pack', exams: 'Question papers', read: 'Reader', books: 'Book' }
+  const DETAIL = { exam: 'Exam pack', exams: 'Question papers', read: 'Reader', books: 'Book', test: 'Chapter test', result: 'Test result' }
   const seg = loc.pathname.slice(base.length + 1).split('/')[0]
   const current = items.find(([p]) => loc.pathname === base + (p ? '/' + p : '')) || items.find(([p]) => p && seg === p) || (DETAIL[seg] ? [seg, '', DETAIL[seg]] : items[0])
   const to = p => base + (p ? '/' + p : '')
@@ -27,7 +28,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
   const tabs = items.length <= 5 ? items : [...items.slice(0, 4), ['__more', 'menu', 'More']]
   const moreCount = items.slice(4).reduce((n, [p]) => n + (counts[p] || 0), 0)
   return (
-    <div className={'shell' + (collapsed || collapse ? ' collapsed' : '')}>
+    <div className={'shell' + ((collapse ? !peek : collapsed) ? ' collapsed' : '')}>
       <aside className="rail">
         <div className="rail-top"><img className="mark-img" src="/brand/zprox_mark.png" alt="" /><div className="brand">EduVerse<small>{role}</small></div></div>
         <nav className="nav" aria-label="Main">
@@ -39,7 +40,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
         </nav>
         <div className="rail-foot">
           <div className="rail-tools">
-            <button className="icon-btn" onClick={() => setCollapsed(c => !c)} aria-label="Collapse menu"><Icon n="menu" s={16} /></button>
+            <button className="icon-btn" onClick={() => (collapse ? setPeek(v => !v) : setCollapsed(c => !c))} aria-label={(collapse ? !peek : collapsed) ? 'Open menu' : 'Collapse menu'} aria-expanded={!(collapse ? !peek : collapsed)}><Icon n="menu" s={16} /></button>
             <button className="icon-btn" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} aria-label="Switch theme"><Icon n={theme === 'dark' ? 'sun' : 'moon'} s={16} /><span>{theme === 'dark' ? 'Light' : 'Dark'}</span></button>
           </div>
           <div className="company"><ZLogo theme="dark" /><span className="tagline">Automate everything effortlessly</span></div>

@@ -27,7 +27,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     user.last_login = datetime.utcnow()
     log(db, user, "login", "user", user.id)
     db.commit()
-    return {"token": make_token(user), "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "school": user.school.name if user.school else ""}}
+    return {"token": make_token(user), "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "school": user.school.name if user.school else "",
+                                                "nickname": (user.profile or {}).get("nickname", "") if hasattr(user, "profile") else ""}}
 
 
 @router.post("/signup")

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { auth, api, LOGIN } from './api'
 import { ToastHost, Modal, Field, ConfirmHost } from './ui'
-import AddContent from './pages/AddContent'
+const AddContent = lazy(() => import('./pages/AddContent'))
 const AiUsage = lazy(() => import('./pages/AiUsage'))
 import Layout from './Layout'
 import Login from './pages/Login'
@@ -32,19 +32,23 @@ const AProfile = lazy(() => import('./pages/admin/Profile'))
 const RQueue = lazy(() => import('./pages/reviewer/Queue'))
 const RHistory = lazy(() => import('./pages/reviewer/History'))
 const RWorkspace = lazy(() => import('./pages/reviewer/Workspace'))
-import SHome from './pages/student/Home'
+const SHome = lazy(() => import('./pages/student/Home'))
 const TOverview = lazy(() => import('./pages/teacher/Overview'))
 const TClasses = lazy(() => import('./pages/teacher/Classes'))
 const TClass = lazy(() => import('./pages/teacher/ClassDetail'))
 const TAnalytics = lazy(() => import('./pages/teacher/Analytics'))
-import SBooks from './pages/student/MyBooks'
-import SStore from './pages/student/Store'
-import SReader from './pages/student/Reader'
-import SExam from './pages/student/ExamPack'
-import SProgress from './pages/student/Progress'
-import Signup from './pages/Signup'
+const SBooks = lazy(() => import('./pages/student/MyBooks'))
+const SStore = lazy(() => import('./pages/student/Store'))
+const SReader = lazy(() => import('./pages/student/Reader'))
+const SExam = lazy(() => import('./pages/student/ExamPack'))
+const SProgress = lazy(() => import('./pages/student/Progress'))
+const Signup = lazy(() => import('./pages/Signup'))
 const ExamPapers = lazy(() => import('./pages/ExamPapers'))
 const RPapers = lazy(() => import('./pages/reviewer/Papers'))
+const RTests = lazy(() => import('./pages/reviewer/Tests'))
+const RTestBooks = lazy(() => import('./pages/reviewer/Tests').then(m => ({ default: m.TestBooks })))
+const STest = lazy(() => import('./pages/student/ChapterTest'))
+const SResult = lazy(() => import('./pages/student/TestResult'))
 
 const SA_NAV = [
   ['', 'home', 'Overview'], ['add', 'upload', 'Add content'],
@@ -93,14 +97,14 @@ function AdminShell() {
   )
 }
 
-const RV_NAV = [['', 'inbox', 'Review queue'], ['papers', 'job', 'Question papers'], ['history', 'audit', 'Reviewed books']]
+const RV_NAV = [['', 'inbox', 'Review queue'], ['tests', 'check', 'Chapter tests'], ['papers', 'job', 'Question papers'], ['history', 'audit', 'Reviewed books']]
 
 function ReviewerShell() {
   const [n, setN] = useState(0); const loc = useLocation()
   useEffect(() => { api('/api/review/queue').then(q => setN(q.filter(b => b.status === 'in_review' && b.has_content).length)).catch(() => {}) }, [loc.pathname])
   return (
     <Layout nav={RV_NAV} base="/review" role="Reviewer" loginPath="/login/reviewer" counts={{ '': n }}>
-      <Routes><Route index element={<RQueue />} /><Route path="papers" element={<RPapers />} /><Route path="history" element={<RHistory />} /><Route path="books/:id" element={<RWorkspace />} /></Routes>
+      <Routes><Route index element={<RQueue />} /><Route path="papers" element={<RPapers />} /><Route path="history" element={<RHistory />} /><Route path="books/:id" element={<RWorkspace />} /><Route path="tests" element={<RTestBooks />} /><Route path="tests/:id" element={<RTests />} /></Routes>
     </Layout>
   )
 }
@@ -122,7 +126,7 @@ function StudentShell() {
   const u = auth.user(); const loc = useLocation()
   return (
     <Layout nav={ST_NAV} base="/student" role={u?.school || 'Learner'} loginPath="/login/student" collapse={loc.pathname.includes('/read/')}>
-      <Routes><Route index element={<SHome />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /></Routes>
+      <Routes><Route index element={<SHome />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /><Route path="test/:bid/:ch" element={<STest />} /><Route path="result/:aid" element={<SResult />} /></Routes>
     </Layout>
   )
 }

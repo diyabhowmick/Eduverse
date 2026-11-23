@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import Base, engine, SessionLocal
-from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn
+from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn, tests, voice
 from .seed import ensure_core
 from .content import ContentMissing
 
@@ -56,6 +56,9 @@ app.include_router(review.public)
 app.include_router(exams.router)
 app.include_router(exams.srouter)
 app.include_router(learn.router)
+app.include_router(tests.router)
+app.include_router(tests.srouter)
+app.include_router(voice.router)
 
 
 @app.get("/api/taxonomy")
@@ -88,6 +91,14 @@ def add_missing_columns():
                     elif isinstance(default, (int, float)):
                         ddl += f" DEFAULT {default}"
                     con.execute(text(ddl))
+
+
+@app.on_event("startup")
+def warm_voice():
+    """Load Eddie's voice in the background so his first answer is not slow."""
+    import threading
+    from . import voice as V
+    threading.Thread(target=lambda: V.engine() and V.say("Hi!"), daemon=True).start()
 
 
 def relax_legacy_columns():

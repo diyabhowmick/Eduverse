@@ -161,6 +161,7 @@ class Book(Base):
     status: Mapped[str] = mapped_column(String(20), default="processing")  # upcoming | processing | in_review | rejected | live | retired
     fingerprint: Mapped[str] = mapped_column(String(80), default="")
     content_key: Mapped[str] = mapped_column(String(300), default="")   # storage folder of the converted book (book.json, images/)
+    live_key: Mapped[str] = mapped_column(String(300), default="")      # the published version students read; kept while a new version is processed and reviewed
     original_key: Mapped[str] = mapped_column(String(400), default="")  # storage key of the uploaded original
     flow_key: Mapped[str] = mapped_column(String(400), default="")      # storage key of the M1 flow document
     review_note: Mapped[str] = mapped_column(Text, default="")
@@ -409,3 +410,63 @@ class PrepJob(Base):
     started_by: Mapped[str] = mapped_column(String(160), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ChapterQuestion(Base):
+    """A question on one chapter of a textbook, written from the book's own text and figures.
+    Students only ever see approved ones; a reviewer checks every question first."""
+    __tablename__ = "chapter_questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    chapter: Mapped[int] = mapped_column(Integer, index=True)
+    section: Mapped[str] = mapped_column(String(80), default="")        # section id, to jump back into the reader
+    section_title: Mapped[str] = mapped_column(String(200), default="")
+    qtype: Mapped[str] = mapped_column(String(20), default="mcq")        # mcq | fill | figure
+    level: Mapped[str] = mapped_column(String(10), default="easy")       # easy | medium | hard
+    text: Mapped[str] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON, default=list)            # [{"key": "a", "text": ...}]
+    answer: Mapped[str] = mapped_column(Text, default="")                # option key, or the word for fill-ins
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(Text, default="")                # the sentence in the book it comes from
+    figure: Mapped[dict] = mapped_column(JSON, default=dict)             # {"image", "number", "caption"} for figure questions
+    status: Mapped[str] = mapped_column(String(12), default="draft", index=True)   # draft | approved | rejected
+    origin: Mapped[str] = mapped_column(String(10), default="rules")     # rules | ai | human
+    reviewed_by: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ChapterAttempt(Base):
+    __tablename__ = "chapter_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    chapter: Mapped[int] = mapped_column(Integer)
+    level: Mapped[str] = mapped_column(String(12), default="quick")      # quick | chapter | retry
+    question_ids: Mapped[list] = mapped_column(JSON, default=list)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)            # {question_id: answer}
+    wrong: Mapped[list] = mapped_column(JSON, default=list)
+    taught: Mapped[list] = mapped_column(JSON, default=list)             # questions Eddie went through with the student
+    fixed: Mapped[list] = mapped_column(JSON, default=list)              # mistakes the student then proved they had learned
+    reasons: Mapped[dict] = mapped_column(JSON, default=dict)            # Daily 5: why each question was picked
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    seconds: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QuestionMemory(Base):
+    """What Eddie remembers about one student and one chapter question: how often right or wrong,
+    whether a mistake is still open, and when to bring it back (spaced repetition)."""
+    __tablename__ = "question_memory"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("chapter_questions.id"), primary_key=True)
+    book_id: Mapped[int] = mapped_column(Integer, index=True)
+    right: Mapped[int] = mapped_column(Integer, default=0)
+    wrong: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(10), default="")       # "" never missed | open | fixed
+    box: Mapped[int] = mapped_column(Integer, default=0)              # 0..4, how well it has stuck
+    due: Mapped[str] = mapped_column(String(10), default="")          # ISO date to bring it back
+    last_answer: Mapped[str] = mapped_column(String(200), default="")
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    fixed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

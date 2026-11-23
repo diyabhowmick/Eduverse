@@ -69,6 +69,7 @@ export default function Catalogue() {
               <td>{b.track === 'exam' ? b.exam : ''}{b.track === 'exam' && (b.board || b.university) ? <div className="muted">{b.board || b.university}</div> : b.level === 'degree' ? <>{b.university}<div className="muted">{b.course}{b.semester ? ', Sem ' + b.semester : ''}</div></> : b.board}</td><td>{b.grade}</td><td className="num">{b.pages || ''}</td><td className="num">{inr(b.price)}</td>
               <td><Tag s={b.status} />
                 {issues?.open_by_book?.[b.id] ? <Link to="/sa/issues" className="tag bad" style={{ marginLeft: 6, textDecoration: 'none' }} title="Pages a reviewer flagged that are still open">{issues.open_by_book[b.id]} flagged</Link> : null}{b.live_at && b.status === 'live' && <div className="muted">since {day(b.live_at)}{b.reviewed_by ? ', by ' + b.reviewed_by : ''}</div>}
+                {b.live_for_students && b.status !== 'live' && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>New version on the way. Students still read the published one.</div>}
                 {b.status === 'rejected' && b.review_note && <div className="muted" style={{ maxWidth: 260 }}>{b.review_note}</div>}
                 {['in_review', 'processing'].includes(b.status) && reviewers && <select className="input" style={{ marginTop: 4, padding: '3px 6px', fontSize: 12, maxWidth: 190 }} value={b.assigned_reviewer_id || ''} onChange={e => assign(b, e.target.value)}>
                   <option value="">Any reviewer</option>{reviewers.filter(r => r.status === 'active').map(r => <option key={r.id} value={r.id}>Reviewer: {r.name}</option>)}</select>}</td>
@@ -80,7 +81,7 @@ export default function Catalogue() {
                 {b.track !== 'exam' && b.pages > 0 && <Link className="btn sm" to={'/sa/books/' + b.id} title="Open the book: original scan beside the digital version, page by page">View</Link>}
                 {(b.status === 'approved' || (b.track === 'exam' && !['live', 'retired'].includes(b.status))) && <button className="btn primary sm" onClick={() => move(b, 'go_live', 'Now live')}>Go live</button>}
                 {b.status === 'live' && <button className="btn ghost sm" title="Send it back to the reviewer. Approved pages are kept." onClick={() => ask('Send this book back to the reviewer? Students will not see it until it is approved again. Approved pages are kept, so only what changed is checked.', { yes: 'Pull back' }).then(ok => ok && move(b, 'pull_back', 'Sent back to the reviewer'))}>Pull back</button>}
-                {b.status === 'live' && <button className="btn ghost sm" onClick={() => move(b, 'retire', 'Book retired')}>Retire</button>}
+                {b.status === 'live' && <button className="btn ghost sm" onClick={() => ask(`Retire ${b.title}? Students and schools stop seeing it straight away. You can restore it later.`, { yes: 'Retire', danger: true }).then(ok => ok && move(b, 'retire', 'Book retired'))}>Retire</button>}
                 {b.status === 'retired' && <button className="btn ghost sm" onClick={() => move(b, 'restore', 'Book is live again')}>Restore</button>}
                 <button className="btn ghost sm" onClick={() => setEdit(b)}>Edit</button>
               </td>

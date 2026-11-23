@@ -13,7 +13,7 @@ export default function Books() {
       <div className="card"><table className="t"><thead><tr><th>Book</th><th>Board</th><th>Class</th><th className="num">Pages</th><th>Assigned to</th></tr></thead>
         <tbody>{rows.map(b => <tr key={b.id}><td><b>{b.title}</b><div className="muted">{b.subject}, {b.medium}</div></td>
           <td>{b.board}{!b.your_board && <div className="muted">Not your board</div>}</td><td>{b.grade}</td><td className="num">{b.pages || ''}</td>
-          <td>{b.status === 'upcoming' ? <Tag s="upcoming">Coming soon</Tag> : b.classes.length ? <div className="chips">{b.classes.map(c => <span key={c} className="chip">{c}</span>)}</div> : <span className="muted">Not assigned. Use Classes to assign.</span>}</td></tr>)}</tbody></table>
+          <td>{b.status === 'upcoming' ? <Tag s="upcoming">Coming soon</Tag> : b.classes.length ? <div className="chips">{b.classes.map(c => <Link key={c} to="/admin/classes" className="chip" title={`Change the books for ${c} in Classes`}>{c}</Link>)}</div> : <span className="muted">Not assigned. Use Classes to assign.</span>}</td></tr>)}</tbody></table>
         {data && !rows.length && <div className="empty">Nothing here yet</div>}</div>
     </Page>
   )

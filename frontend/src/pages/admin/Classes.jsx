@@ -40,7 +40,7 @@ export default function Classes() {
           <div className="meta">{c.students} students{c.class_teacher ? `, ${c.class_teacher}` : ''}</div>
           <div className="chips">{c.books.length ? c.books.map(b => <span className="chip" key={b.id}>{b.subject}</span>) : <span className="tag warn">No books yet</span>}</div>
           <div className="foot"><button className="btn sm" onClick={() => setAssign(c)}>Assign books</button><button className="btn ghost sm" onClick={() => setEdit(c)}>Edit</button>
-            <button className="btn ghost sm" style={{ color: 'var(--red)', marginLeft: 'auto' }} onClick={() => setDel(c)}>Delete</button></div>
+            <button className="btn ghost sm" style={{ color: 'var(--red)', marginLeft: 'auto' }} disabled={c.students > 0} title={c.students > 0 ? 'Move its students to another class first' : 'Delete this class'} onClick={() => setDel(c)}>Delete</button></div>
         </div>))}</div>
       {data && !data.length && <div className="card empty">No classes yet. Add one, or upload students and classes are created for you.</div>}
       {edit && <ClassForm c={edit.id ? edit : null} onClose={() => setEdit(null)} onSaved={done} />}

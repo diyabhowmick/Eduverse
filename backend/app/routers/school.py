@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..db import get_db
+from .. import content as C
 from ..models import (User, School, ClassRoom, ClassBook, Book, SchoolRequest, StudentProgress, UsageEvent,
                       AuditLog, Setting)
 from ..security import require, hash_pw
@@ -174,8 +175,14 @@ def set_class_books(cid: int, body: BooksIn, db: Session = Depends(get_db), me=D
     if limit and len(ids) > limit:
         raise HTTPException(422, f"Your {s.plan.name} plan allows {limit} books per class. Ask for a plan upgrade to add more.")
     books = db.query(Book).filter(Book.id.in_(ids)).all() if ids else []
-    if any(b.status != "live" for b in books) or len(books) != len(ids):
-        raise HTTPException(422, "Only live books can be assigned")
+    if len(books) != len(ids):
+        raise HTTPException(422, "One of these books no longer exists")
+    already = {cb.book_id for cb in db.query(ClassBook).filter(ClassBook.class_id == cid)}
+    # A book already on the class stays, even while a new version of it is processed.
+    # Only books being added now must be readable.
+    new_not_live = [b.title for b in books if b.id not in already and not C.serving(b)]
+    if new_not_live:
+        raise HTTPException(422, f"Only live books can be assigned. Not live yet: {', '.join(new_not_live)}")
     db.query(ClassBook).filter(ClassBook.class_id == cid).delete()
     for b in ids:
         db.add(ClassBook(class_id=cid, book_id=b))
@@ -187,13 +194,14 @@ def set_class_books(cid: int, body: BooksIn, db: Session = Depends(get_db), me=D
 @router.get("/catalogue")
 def catalogue(db: Session = Depends(get_db), me=Depends(school_admin)):
     s = my_school(db, me)
-    books = db.query(Book).filter(Book.status.in_(("live", "upcoming"))).order_by(Book.grade, Book.subject).all()
+    from sqlalchemy import or_
+    books = db.query(Book).filter(or_(C.serving_filter(), Book.status == "upcoming")).order_by(Book.grade, Book.subject).all()
     cls = {c.id: f"{c.grade}{c.section}" for c in db.query(ClassRoom).filter(ClassRoom.school_id == s.id)}
     assigned = defaultdict(list)
     for cb in db.query(ClassBook).filter(ClassBook.class_id.in_(list(cls))).all() if cls else []:
         assigned[cb.book_id].append(cls[cb.class_id])
     return [{"id": b.id, "title": b.title, "subject": b.subject, "board": b.board, "grade": b.grade, "medium": b.medium,
-             "pages": b.pages, "status": b.status, "your_board": b.board == s.board, "classes": sorted(assigned[b.id])} for b in books]
+             "pages": b.pages, "status": "live" if C.serving(b) else b.status, "your_board": b.board == s.board, "classes": sorted(assigned[b.id])} for b in books]
 
 
 # ---------- students ----------
@@ -543,7 +551,7 @@ def req_out(r: SchoolRequest, db=None):
         if b:
             d["book"] = {"id": b.id, "title": b.title,
                          "stage": BOOK_STAGE.get(b.status, b.status),
-                         "ready": b.status == "live"}
+                         "ready": C.serving(b)}
     return d
 
 

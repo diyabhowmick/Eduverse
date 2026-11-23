@@ -66,8 +66,10 @@ def identity(items, first_chapter_page):
         if norm(t) in SUBJECTS:
             out["subject"] = t.strip().title(); conf["subject"] = "front page heading"; break
     if not out["subject"]:
+        # "Government of Tamil Nadu" names a state, not the Tamil subject
+        plain = re.sub(r"government of [a-z ]+|\b(tamil nadu|andhra pradesh|madhya pradesh|uttar pradesh|west bengal)\b", " ", joined, flags=re.I)
         for s in SUBJECTS:
-            if re.search(r"\b" + s + r"\b", joined, re.I):
+            if re.search(r"\b" + s + r"\b", plain, re.I):
                 out["subject"] = s.title(); conf["subject"] = "front page text"; break
     m = re.search(r"government of ([a-z ]+?)\s*$", joined, re.I | re.M)
     if m:
@@ -305,11 +307,22 @@ def build(raw):
         starts, split = fallback_starts(items)
     first_page = items[starts[0][1]]["page"] if starts else 99
     ident, conf = identity(items, first_page)
+    # Pages before the first numbered section used to be dropped without a word:
+    # a chapter opener, an introduction, or simply a book whose first chapter is
+    # not numbered. They now become an "Opening pages" unit (number 0), so the
+    # reviewer sees every page and can remove what is only cover or copyright.
+    opening = 0
+    if split == "sections" and starts and starts[0][1] > 0:
+        pre = [e for i, e in enumerate(items[:starts[0][1]]) if i != toc_idx
+               and ((e["kind"] == "p" and len((e.get("text") or "").strip()) > 2) or e["kind"] == "table" or e.get("drawings"))]
+        if pre:
+            starts = [(0, 0)] + list(starts)
+            opening = len({e["page"] for e in pre if e.get("page")})
     toc_titles = {t["unit"]: t["title"] for t in toc if t["unit"]}
     rep = running_lines(items, toc_titles, ident)
 
     chapters = []
-    stats = {"joined": 0, "split_by": split}
+    stats = {"joined": 0, "split_by": split, "opening_pages": opening}
     bounds = [(n, s, (starts[k + 1][1] if k + 1 < len(starts) else len(items))) for k, (n, s) in enumerate(starts)]
     bid = 0
     for n, s, e in bounds:
@@ -331,7 +344,7 @@ def build(raw):
                             and el.get("text", "").strip() and not box_kind(el["text"])), None)
                 if hit:
                     title = hit["text"].strip().title(); break
-        ch = {"number": n, "title": title or f"Unit {n}", "page_start": items[s]["page"], "page_end": items[e - 1]["page"],
+        ch = {"number": n, "title": title or ("Opening pages" if n == 0 else f"Unit {n}"), "page_start": items[s]["page"], "page_end": items[e - 1]["page"],
               "sections": [], "blocks": []}
         # captions available in this chapter
         caps = [(i, el) for i, el in seq if el["kind"] == "p" and (el["style"] == "EVCaption" or CAP_FIG.match(el["text"]) or CAP_TAB.match(el["text"]))

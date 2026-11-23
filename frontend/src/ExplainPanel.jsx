@@ -53,6 +53,7 @@ export default function ExplainPanel({ request, styles = Object.keys(STYLE) }) {
     {busy && <div className="xp-think" aria-label="Writing the explanation"><i /><i /><i /></div>}
     {err && !busy && <div className="err" role="alert">{err}</div>}
     {top && !busy && <>
+      {top.note && <div className="muted xp-note" style={{ marginBottom: 6 }}>{top.note}</div>}
       <div className="xp-text" ref={box} onMouseUp={onSelect}><MathText text={top.text} /></div>
       {top.id ? <>
         <div className="xp-acts">

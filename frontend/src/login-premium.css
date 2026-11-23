@@ -1,0 +1,156 @@
+/* ===== Login: premium finish ===== */
+.login.lux{background:#0E0F12}
+.lux .login-form{position:relative;background:
+  radial-gradient(ellipse 70% 50% at 100% 0%,rgba(224,33,47,.06),transparent 60%),
+  radial-gradient(ellipse 60% 50% at 0% 100%,rgba(27,29,34,.04),transparent 60%),
+  #F7F7F5;border-left:1px solid rgba(0,0,0,.05)}
+[data-theme=dark] .lux .login-form{background:radial-gradient(ellipse 70% 50% at 100% 0%,rgba(224,33,47,.10),transparent 60%),#15171C;border-left-color:rgba(255,255,255,.05)}
+.lux .login-form form{width:min(400px,100%);gap:18px;padding:40px 36px 34px;border-radius:22px;background:var(--bg);
+  border:1px solid rgba(20,22,28,.07);
+  box-shadow:0 1px 0 rgba(255,255,255,.8) inset,0 1px 2px rgba(20,22,28,.04),0 12px 32px -8px rgba(20,22,28,.10),0 40px 80px -24px rgba(20,22,28,.12)}
+[data-theme=dark] .lux .login-form form{border-color:rgba(255,255,255,.06);box-shadow:0 30px 70px -20px rgba(0,0,0,.6)}
+
+.lux .portal{gap:8px;font-size:11.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);
+  padding:6px 12px 6px 10px;border:1px solid var(--line);background:var(--panel)}
+.lux .portal i{width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+.lux-head{display:grid;gap:6px;margin-bottom:2px}
+.lux-head h1{margin:0;font-size:30px!important;font-weight:750;letter-spacing:-.035em;line-height:1.1}
+.lux-head p{margin:0;color:var(--ink-3);font-size:14px}
+
+.lux .field{gap:7px}
+.lux .field label{font-size:12.5px;font-weight:650;color:var(--ink-2);letter-spacing:.01em}
+.lux .input{height:48px;padding:0 14px;border-radius:12px;font-size:15px;border:1px solid var(--line-2);background:var(--bg);
+  transition:border-color .18s,box-shadow .18s,background .18s}
+.lux .input:hover{border-color:var(--ink-3)}
+.lux .input:focus{border-color:var(--red);box-shadow:0 0 0 4px rgba(224,33,47,.12)}
+.pw-wrap{position:relative}
+.pw-wrap .input{padding-right:48px}
+.pw-eye{position:absolute;right:6px;top:6px;width:36px;height:36px;border:0;border-radius:9px;background:none;color:var(--ink-3);cursor:pointer;display:grid;place-items:center;transition:color .15s,background .15s}
+.pw-eye:hover{color:var(--ink);background:var(--panel)}
+.pw-eye svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+.lux .lux-cta{position:relative;height:50px;border-radius:12px;font-size:15px;font-weight:700;letter-spacing:.01em;gap:10px;justify-content:center;overflow:hidden;
+  background:linear-gradient(180deg,#EC2A38 0%,#D41B29 100%);border:1px solid #B5141F;
+  box-shadow:0 1px 0 rgba(255,255,255,.22) inset,0 8px 20px -6px rgba(224,33,47,.55),0 2px 4px rgba(224,33,47,.2);
+  transition:transform .18s cubic-bezier(.2,.7,.2,1),box-shadow .18s,filter .18s}
+.lux .lux-cta svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.lux .lux-cta:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.04);box-shadow:0 1px 0 rgba(255,255,255,.22) inset,0 14px 28px -8px rgba(224,33,47,.6),0 2px 4px rgba(224,33,47,.2)}
+.lux .lux-cta:hover svg{transform:translateX(3px)}
+.lux .lux-cta:active:not(:disabled){transform:translateY(0) scale(.99)}
+.lux .lux-cta:after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);transform:skewX(-20deg);transition:left .7s}
+.lux .lux-cta:hover:after{left:130%}
+.lux .lux-cta.busy{opacity:.9;cursor:progress}
+.lux .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:lux-spin .7s linear infinite}
+@keyframes lux-spin{to{transform:rotate(360deg)}}
+.lux .err{border:1px solid rgba(224,33,47,.25);border-radius:10px;animation:lux-shake .35s}
+@keyframes lux-shake{20%,60%{transform:translateX(-4px)}40%,80%{transform:translateX(4px)}}
+
+.lux .login-form form>span{line-height:1.6}
+.lux .login-form form>span:last-child{padding-top:14px;border-top:1px solid var(--line)}
+
+.lc-tag{display:inline-flex;align-items:center;gap:10px;text-transform:uppercase;letter-spacing:.2em;font-weight:650;color:#8A90A0}
+.lc-tag i{width:4px;height:4px;border-radius:50%;background:#E0212F}
+
+/* ---- entrance ---- */
+.lux.is-pre .login-art>:not(.fold-slot),.lux.is-pre .login-form form,.lux.is-pre .login-strip>:not(.fold-slot){opacity:0}
+.lux.is-in .login-art>:not(.fold-slot),.lux.is-in .login-form form,.lux.is-in .login-strip>:not(.fold-slot){animation:lux-up .9s cubic-bezier(.2,.7,.2,1) both}
+.lux.is-in .login-art>:nth-child(1){animation-delay:.5s}
+.lux.is-in .login-art>:nth-child(3){animation-delay:.62s}
+.lux.is-in .login-form form{animation-delay:.18s}
+.lux.is-in .login-strip>:nth-child(2){animation-delay:.6s}
+@keyframes lux-up{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+@keyframes lux-mark{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
+.lux.is-in .login-art{animation:lux-bg 1.2s ease both}
+@keyframes lux-bg{from{filter:brightness(.6)}to{filter:none}}
+
+@media (max-width:900px){
+  .lux .login-form{border-left:0}
+  .lux .login-form form{padding:26px 20px 22px;border-radius:18px;max-width:440px}
+  .lux-head h1{font-size:26px!important}
+}
+@media (prefers-reduced-motion:reduce){
+  .lux.is-in *{animation:none!important}
+  .lux .lux-cta,.lux .lux-cta:after{transition:none}
+}
+
+/* ---- hero fold logo ---- */
+.lux .login-art{justify-content:space-between;align-items:stretch}
+.lux .fold-slot{position:relative;align-self:center;flex:none}
+.fold-wait{opacity:0}
+.fold-in{animation:fold-in .5s ease .7s both}
+@keyframes fold-in{from{opacity:0}to{opacity:1}}
+.lux .login-art .login-copy{position:relative;z-index:1}
+.strip-by{display:inline-flex;align-items:center;gap:7px;align-self:center;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#8D93A1;margin-top:-4px}
+.strip-by img{height:12px}
+@media (max-width:900px){
+  .lux .login-strip{align-items:center;padding:16px 12px 14px;gap:6px}
+  .lux .login-strip{position:relative}
+}
+
+/* ---- logo + story stacked in the art panel ---- */
+.lux .login-art{gap:14px}
+.lux .login-art .story{flex:1 1 auto;min-height:0;margin-top:-6px}
+.lux .login-art .story-stage{min-height:220px}
+.lux.is-in .login-art>.story{animation-delay:.7s}
+.lux .login-strip .fold-slot{margin:4px auto 0}
+.lux .login-strip .story{width:100%}
+@media (max-width:900px){.lux .login-strip .story.compact .story-stage{height:165px}}
+
+/* ---- sign-in launch ---- */
+.launch{position:fixed;inset:0;z-index:1100;pointer-events:none}
+.launch-bg{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse 60% 55% at 50% 50%,rgba(224,33,47,.28),transparent 70%),linear-gradient(180deg,#121318,#0A0B0E)}
+.launch-cube{position:fixed;will-change:transform,opacity;animation:launch-in .3s ease both}
+@keyframes launch-in{from{opacity:0}to{opacity:1}}
+.lux.is-launching .fold-slot{opacity:0;transition:opacity .25s}
+.lux.is-launching .login-form form,.lux.is-launching .login-art .story,.lux.is-launching .brandmark,.lux.is-launching .snd-toggle{
+  transition:opacity .5s ease .9s,transform .6s cubic-bezier(.5,0,.75,0) .9s;opacity:0;transform:scale(.97)}
+
+/* ---- sound toggle ---- */
+.snd-toggle{position:fixed;left:calc(52.38vw + 20px);bottom:18px;z-index:40;display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px 0 9px;border-radius:999px;
+  border:1px solid var(--line);background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(8px);color:var(--ink-3);font:inherit;font-size:11.5px;font-weight:600;letter-spacing:.02em;cursor:pointer;
+  transition:color .2s,border-color .2s,background .2s}
+.snd-toggle:hover{color:var(--ink);border-color:var(--line-2)}
+.snd-toggle.on{color:var(--red);border-color:rgba(224,33,47,.3)}
+.snd-toggle svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.snd-toggle svg path:first-child{fill:currentColor;fill-opacity:.15}
+.snd-toggle.on .w1{animation:snd-w 1.4s ease-in-out infinite}.snd-toggle.on .w2{animation:snd-w 1.4s ease-in-out .2s infinite}
+@keyframes snd-w{0%,100%{opacity:1}50%{opacity:.35}}
+@media (max-width:900px){.snd-toggle{position:absolute;left:26px;top:26px;bottom:auto;right:auto;height:30px;padding:0 9px;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12);color:#8D93A1}.snd-toggle span{display:none}.snd-toggle.on{color:#FF6670}}
+.lux.is-pre .snd-toggle{opacity:0}
+.lux.is-in .snd-toggle{animation:lux-up .9s cubic-bezier(.2,.7,.2,1) .8s both}
+
+.launch-zoom .fader>svg:last-of-type{opacity:0;transition:opacity .3s ease}
+.launch-veil{position:fixed;inset:0;z-index:2000;pointer-events:none;background:radial-gradient(ellipse 60% 55% at 50% 50%,rgba(224,33,47,.28),transparent 70%),linear-gradient(180deg,#121318,#0A0B0E)}
+
+/* ---- form side: soft moving light, field icons, caps lock ---- */
+.lux .login-form{overflow:hidden}
+.lux .login-form:before,.lux .login-form:after{content:"";position:absolute;border-radius:50%;filter:blur(60px);pointer-events:none;z-index:0;opacity:.55}
+.lux .login-form:before{width:420px;height:420px;right:-120px;top:-140px;background:radial-gradient(circle,rgba(224,33,47,.16),transparent 65%);animation:aur-a 18s ease-in-out infinite alternate}
+.lux .login-form:after{width:380px;height:380px;left:-140px;bottom:-160px;background:radial-gradient(circle,rgba(255,138,128,.14),transparent 65%);animation:aur-b 22s ease-in-out infinite alternate}
+@keyframes aur-a{to{transform:translate(-80px,90px) scale(1.12)}}
+@keyframes aur-b{to{transform:translate(90px,-70px) scale(1.1)}}
+.lux .login-form form{z-index:1}
+.in-wrap{position:relative}
+.in-wrap .in-ic{position:absolute;left:14px;top:50%;width:18px;height:18px;margin-top:-9px;fill:none;stroke:var(--ink-3);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;transition:stroke .18s}
+.in-wrap .input{padding-left:42px}
+.in-wrap:focus-within .in-ic{stroke:var(--red)}
+.caps-warn{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;font-weight:600;color:#9A5B00}
+.caps-warn:before{content:"";width:6px;height:6px;border-radius:50%;background:#E0A100}
+@media (prefers-reduced-motion:reduce){.lux .login-form:before,.lux .login-form:after{animation:none}}
+/* slow starfield behind the left panel: three layers at different sizes and speeds, a few twinkle */
+.lux .login-art{isolation:isolate;position:relative;overflow:hidden}
+.lux .login-art .stars{position:absolute;inset:0;z-index:-1;pointer-events:none}
+.lux .login-art .stars i{position:absolute;inset:-20%;opacity:.55;
+  background-image:radial-gradient(1px 1px at 23px 41px,#fff,transparent),radial-gradient(1px 1px at 151px 97px,#fff,transparent),
+    radial-gradient(1.5px 1.5px at 271px 203px,#ffd9dc,transparent),radial-gradient(1px 1px at 93px 291px,#fff,transparent),
+    radial-gradient(1px 1px at 311px 33px,#fff,transparent),radial-gradient(1.2px 1.2px at 199px 317px,#fff,transparent);
+  background-size:337px 337px;animation:lux-drift 160s linear infinite}
+.lux .login-art .stars i:nth-child(2){background-size:523px 523px;opacity:.4;animation-duration:240s;animation-direction:reverse}
+.lux .login-art .stars i:nth-child(3){background-size:711px 711px;opacity:.7;animation:lux-drift 320s linear infinite,lux-twinkle 4.5s ease-in-out infinite}
+@keyframes lux-drift{from{background-position:0 0}to{background-position:-680px 1020px}}
+@keyframes lux-twinkle{0%,100%{opacity:.25}50%{opacity:.8}}
+@media (prefers-reduced-motion:reduce){.lux .login-art .stars i{animation:none}}
+.replay-intro{position:fixed;left:18px;bottom:16px;z-index:5;border:0;background:none;padding:6px 8px;font:inherit;font-size:12px;color:rgba(255,255,255,.45);cursor:pointer;border-radius:8px}
+.replay-intro:hover{color:#fff;background:rgba(255,255,255,.08)}
+@media (max-width:900px){.replay-intro{display:none}}
+.lux-head .linkbtn{font-size:inherit}

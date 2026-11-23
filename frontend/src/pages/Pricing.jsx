@@ -65,7 +65,7 @@ export default function Pricing() {
                 <td className="num">{p.credits_per_seat}</td><td className="num">{p.max_books || 'All'}</td>
                 <td className="muted">{FEATS.filter(([k]) => p.features[k]).map(([, l]) => l).join(', ') || 'Reader only'}</td>
                 <td className="num">{p.schools}</td><td><Tag s={p.active ? 'active' : 'inactive'}>{p.active ? 'On sale' : 'Hidden'}</Tag></td>
-                <td className="acts"><button className="btn ghost sm" onClick={() => setEp(p)}>Edit</button><button className="btn ghost sm" style={{ color: 'var(--red)' }} onClick={() => setDel({ kind: 'plans', id: p.id, name: p.name })}>Delete</button></td></tr>))}</tbody></table>
+                <td className="acts"><button className="btn ghost sm" onClick={() => setEp(p)}>Edit</button><button className="btn ghost sm" style={{ color: 'var(--red)' }} disabled={p.schools > 0} title={p.schools > 0 ? `${p.schools} organisations are on this plan. Move them to another plan, or hide this one.` : 'Delete this plan'} onClick={() => setDel({ kind: 'plans', id: p.id, name: p.name })}>Delete</button></td></tr>))}</tbody></table>
         </div>
         <div className="card">
           <div className="card-h"><h3>Discount codes</h3><button className="btn sm right" onClick={() => setEd({})}><Icon n="plus" s={14} />New code</button></div>

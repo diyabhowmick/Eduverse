@@ -222,14 +222,19 @@ def run_m1(job_id: int):
             j.status, j.stage, j.finished_at = "cancelled", "Stopped", datetime.utcnow()
             j.error = ""
             if j.book and j.book.status == "processing":
-                j.book.status = "upcoming"
+                if j.book.live_key:      # an update was cancelled: the published version simply stays
+                    j.book.status, j.book.content_key = "live", j.book.live_key
+                else:
+                    j.book.status = "upcoming"
         except Exception as e:
             db.rollback(); j = db.get(Job, job_id)
             # Pin the error to the stage it happened in, so "where did it break"
             # is answerable after the fact and not only from the log.
             _mark(j, j.stage, error=str(e), end=True)
             j.status, j.error, j.finished_at = "failed", str(e)[-2000:], datetime.utcnow()
-            if j.book and j.book.status == "processing" and j.book.content_key:
+            if j.book and j.book.status == "processing" and j.book.live_key and j.book.content_key == j.book.live_key:
+                j.book.status = "live"  # the update failed before anything new was made: the published version stays
+            elif j.book and j.book.status == "processing" and j.book.content_key:
                 j.book.status = "in_review"  # converted content is still reviewable
         db.commit()
     finally:
@@ -435,6 +440,8 @@ async def _create_job(db: Session, me, src: Path, filename: str, *, title, subje
         book = db.get(Book, book_id)
         if not book:
             raise HTTPException(404, "Book not found")
+        if book.status == "live" and book.content_key:
+            book.live_key = book.live_key or book.content_key   # students keep reading this until the new version is published
         book.status = "processing"
     else:
         book = Book(title=title.strip() or filename.rsplit(".", 1)[0], subject=subject, board=board, grade=grade,

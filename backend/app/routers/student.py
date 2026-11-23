@@ -34,9 +34,9 @@ def book_card(b: Book, prog=None, how=None):
     track = b.track or "textbook"
     return {"id": b.id, "title": b.title, "subject": b.subject, "board": b.board, "grade": b.grade, "medium": b.medium,
             "track": track, "level": b.level or "school", "exam": b.exam, "university": b.university, "course": b.course, "semester": b.semester,
-            "edition": b.edition, "price": b.price, "status": b.status, "content_type": b.content_type or "book",
+            "edition": b.edition, "price": b.price, "status": "live" if C.serving(b) else b.status, "content_type": b.content_type or "book",
             "cover": f"/api/books/{b.id}/cover" if b.cover_key else "",
-            "readable": b.status == "live" and (track == "exam" or bool(b.content_key)),
+            "readable": C.serving(b) and (track == "exam" or bool(C.reader_key(b))),
             "owned": how, "progress": round(prog.percent) if prog else 0, "minutes": prog.minutes if prog else 0,
             "last_read": prog.last_read if prog else None, "position": prog.position if prog else {}}
 
@@ -68,7 +68,7 @@ def home(db: Session = Depends(get_db), me=Depends(student)):
     ids = owned_ids(db, me)
     prog = {p.book_id: p for p in db.query(StudentProgress).filter(StudentProgress.user_id == me.id)}
     books = db.query(Book).filter(Book.id.in_(list(ids))).all() if ids else []
-    mine = [book_card(b, prog.get(b.id), ids[b.id]) for b in books if b.status == "live"]
+    mine = [book_card(b, prog.get(b.id), ids[b.id]) for b in books if C.serving(b)]
     mine.sort(key=lambda x: (x["last_read"] is None, -(x["last_read"].timestamp() if x["last_read"] else 0), x["title"]))
     days = {r.day: r for r in db.query(StudentDay).filter(StudentDay.user_id == me.id, StudentDay.day >= (date.today() - timedelta(days=13)).isoformat())}
     week = [(date.today() - timedelta(days=6 - i)).isoformat() for i in range(7)]
@@ -90,7 +90,37 @@ def home(db: Session = Depends(get_db), me=Depends(student)):
             "upcoming": [book_card(b) for b in upcoming], "rules": rules_for(db, me), "store_on": feature(db, "student_store"),
             "goal_minutes": int(prof.get("goal_minutes") or 20), "exam_date": prof.get("exam_date") or "",
             "today_minutes": round((days[date.today().isoformat()].seconds if date.today().isoformat() in days else 0) / 60),
-            "today_questions": _today_questions(db, me), "practice": weak_chapters(db, me), "last_exam": _last_exam(db, me, mine)}
+            "today_questions": _today_questions(db, me), "practice": weak_chapters(db, me), "last_exam": _last_exam(db, me, mine),
+            **_tests_home(db, me, mine, prog)}
+
+
+def _tests_home(db, me, mine, prog):
+    """The chapter test Eddie suggests next, and the last one taken, for the Home plan."""
+    from ..models import ChapterAttempt
+    from .tests import counts
+    last = db.query(ChapterAttempt).filter(ChapterAttempt.user_id == me.id, ChapterAttempt.finished_at.isnot(None), ChapterAttempt.level != "daily").order_by(ChapterAttempt.finished_at.desc()).first()
+    nxt = None
+    for b in mine:
+        if b["track"] == "exam" or not b["readable"]:
+            continue
+        n = counts(db, b["id"])
+        ch = ((prog.get(b["id"]).position or {}) if prog.get(b["id"]) else {}).get("chapter")
+        ch = ch if ch in n else next(iter(sorted(n)), None)
+        if ch is None:
+            continue
+        done = db.query(ChapterAttempt).filter(ChapterAttempt.user_id == me.id, ChapterAttempt.book_id == b["id"], ChapterAttempt.chapter == ch,
+                                              ChapterAttempt.finished_at >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)).first()
+        try:
+            bk = db.get(Book, b["id"]); title = next((c["title"] for c in C.load(bk, C.reader_key(bk))["chapters"] if c["number"] == ch), "")
+        except Exception:
+            title = ""
+        nxt = {"book_id": b["id"], "book_title": b["title"], "chapter": ch, "chapter_title": title, "count": n[ch], "done_today": bool(done)}
+        break
+    from .tests import daily_status
+    from .. import memory as M
+    mem = M.summary(db, me.id)
+    return {"daily": daily_status(db, me), "memory": {**mem, "for_eddie": M.for_eddie(mem)}, "test_next": nxt, "last_test": {"id": last.id, "score": last.score, "total": last.total, "chapter": last.chapter, "book_id": last.book_id,
+                                            "untaught": len([q for q in (last.wrong or []) if q not in (last.taught or [])])} if last else None}
 
 
 def _today_questions(db, me):
@@ -120,7 +150,7 @@ def progress_page(db: Session = Depends(get_db), me=Depends(student)):
     month = [(date.today() - timedelta(days=29 - i)).isoformat() for i in range(30)]
     ids = owned_ids(db, me)
     prog = {p.book_id: p for p in db.query(StudentProgress).filter(StudentProgress.user_id == me.id)}
-    books = [book_card(b, prog.get(b.id), ids[b.id]) for b in db.query(Book).filter(Book.id.in_(list(ids) or [0]), Book.status == "live")]
+    books = [book_card(b, prog.get(b.id), ids[b.id]) for b in db.query(Book).filter(Book.id.in_(list(ids) or [0]), C.serving_filter())]
     tests = db.query(MockAttempt).filter(MockAttempt.user_id == me.id, MockAttempt.submitted_at.isnot(None)).order_by(MockAttempt.submitted_at.desc()).limit(20).all()
     rows = db.query(QuestionProgress, Question).join(Question, Question.id == QuestionProgress.question_id).filter(QuestionProgress.user_id == me.id).all()
     from .exams import subject_of
@@ -154,7 +184,8 @@ def store(track: str = "textbook", level: str = "", board: str = "", grade: str 
     if track == "exam" and not feature(db, "exam_track"):
         raise HTTPException(403, "Exam preparation is turned off")
     ids = owned_ids(db, me)
-    base = db.query(Book).filter(Book.status.in_(("live", "upcoming")))
+    from sqlalchemy import or_
+    base = db.query(Book).filter(or_(C.serving_filter(), Book.status == "upcoming"))
     base = base.filter(Book.track == track) if track == "exam" else base.filter((Book.track == "textbook") | (Book.track.is_(None)))
     shelf = base.filter(Book.level == level) if level else base
     def vals(col, q=shelf):
@@ -179,6 +210,7 @@ class ProfileIn(BaseModel):
     university: str | None = None
     course: str | None = None
     goal_minutes: int | None = None   # daily reading or practice goal
+    nickname: str | None = None       # what Eddie calls the student
     exam_date: str | None = None      # YYYY-MM-DD, for the countdown on Home
 
 
@@ -193,6 +225,8 @@ def set_profile(body: ProfileIn, db: Session = Depends(get_db), me=Depends(stude
             date.fromisoformat(ch["exam_date"])
         except ValueError:
             raise HTTPException(422, "Exam date must look like 2027-01-24")
+    if ch.get("nickname") is not None:
+        ch["nickname"] = " ".join(ch["nickname"].split())[:30]
     me.profile = {**(me.profile or {}), **{k: (v.strip() if isinstance(v, str) else v) for k, v in ch.items()}}
     db.commit()
     return me.profile
@@ -219,7 +253,7 @@ class BuyIn(BaseModel):
 @router.post("/purchase")
 def purchase(body: BuyIn, db: Session = Depends(get_db), me=Depends(student)):
     b = db.get(Book, body.book_id)
-    if not b or b.status != "live":
+    if not b or not C.serving(b):
         raise HTTPException(409, "This book is not available to buy yet")
     if body.book_id in owned_ids(db, me):
         raise HTTPException(409, "You already have this book")
@@ -229,15 +263,20 @@ def purchase(body: BuyIn, db: Session = Depends(get_db), me=Depends(student)):
     return {"ok": True, "note": "Recorded as a demo purchase. No payment was taken; the payment gateway is not connected yet."}
 
 
+def test_counts(db, bid):
+    from .tests import counts
+    return counts(db, bid)
+
+
 def readable_book(db, me, bid) -> Book:
     b = db.get(Book, bid)
-    if not b or b.status != "live":
+    if not b or not C.serving(b):
         raise HTTPException(404, "Book not available")
     if b.track == "exam":
         raise HTTPException(409, "This is an exam pack. Open it from My books.")
     if bid not in owned_ids(db, me):
         raise HTTPException(403, "Get this book from the store first")
-    if not b.content_key:
+    if not C.reader_key(b):
         raise HTTPException(409, "This book is still being prepared")
     return b
 
@@ -245,13 +284,13 @@ def readable_book(db, me, bid) -> Book:
 @router.get("/books/{bid}")
 def read_book(bid: int, db: Session = Depends(get_db), me=Depends(student)):
     b = readable_book(db, me, bid)
-    data = C.load(b)
+    data = C.load(b, C.reader_key(b))
     p = db.get(StudentProgress, (me.id, bid))
     packs = [x for x in db.query(Book).filter(Book.track == "exam", Book.status == "live") if bid in (x.linked_book_ids or [])]
     return {"practice_packs": [{"id": x.id, "title": x.title, "owned": x.id in owned_ids(db, me)} for x in packs],
             "id": b.id, "title": b.title, "board": b.board, "grade": b.grade, "subject": b.subject, "book": data["book"], "toc": data["toc"],
             "chapters": data["chapters"], "progress": {"percent": round(p.percent) if p else 0, "sections": p.sections if p else [], "position": p.position if p else {}},
-            "rules": rules_for(db, me)}
+            "rules": rules_for(db, me), "tests": test_counts(db, bid)}
 
 
 class ProgressIn(BaseModel):
@@ -264,7 +303,7 @@ class ProgressIn(BaseModel):
 def progress(bid: int, body: ProgressIn, db: Session = Depends(get_db), me=Depends(student)):
     b = readable_book(db, me, bid)
     secs = max(0, min(body.seconds, 300))  # at most 5 minutes per ping
-    data = C.load(b)
+    data = C.load(b, C.reader_key(b))
     total = sum(1 for ch in data["chapters"] for s in ch["sections"] if s["number"])
     p = db.get(StudentProgress, (me.id, bid))
     first_today = not p or not p.last_read or p.last_read.date() != datetime.utcnow().date()

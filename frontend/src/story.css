@@ -5,13 +5,12 @@
    ============================================================ */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
-.brandmark{display:flex;align-items:baseline;gap:12px;position:relative;z-index:1}
-.bm-word{font-family:'Source Serif 4',Georgia,serif;font-size:30px;font-weight:600;color:#fff;letter-spacing:-.02em;line-height:1}
-.bm-word b{color:#FF6670;font-weight:600}
-.bm-logo{height:38px;width:auto}
-.bm-by{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#8D93A1;letter-spacing:.04em}
+.brandmark{display:flex;align-items:center;gap:14px;position:relative;z-index:1}
+.bm-word{font-family:'Exo 2',Arial,sans-serif;font-style:italic;font-weight:900;font-size:22px;line-height:1;letter-spacing:-.2px;color:#fff}
+.bm-word b{color:#FF3B47;font-weight:900}
+.bm-by{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;color:#8D93A1;letter-spacing:.08em;text-transform:uppercase;padding-left:14px;border-left:1px solid rgba(255,255,255,.12)}
 .bm-by img{height:14px;width:auto}
-.brandmark.small .bm-word{font-size:22px}.brandmark.small .bm-by img{height:12px}
+.brandmark.small{gap:10px}.brandmark.small .bm-word{font-size:18px}.brandmark.small .bm-by img{height:12px}.brandmark.small .bm-by{font-size:9.5px;padding-left:10px}
 
 .story{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:10px;position:relative;z-index:1}
 .story-stage{position:relative;flex:1 1 auto;min-height:190px}
@@ -199,3 +198,4 @@
 /* the left-hand page edges only appear as the page lands, so nothing shows on the left before it opens */
 .story-canvas .book-scene:not(.opened) .bk-stack{animation:stack-in .35s ease 1.05s both}
 @keyframes stack-in{from{opacity:0}to{opacity:1}}
+

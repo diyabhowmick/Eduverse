@@ -27,7 +27,7 @@ def openai_json(model, prompt, images=(), base_url=None, api_key=None, timeout=2
     return json.loads(data["choices"][0]["message"]["content"])
 
 
-def call(provider, model, prompt, base_url=None, api_key=None, timeout=120, json_mode=False, usage=None):
+def call(provider, model, prompt, base_url=None, api_key=None, timeout=120, json_mode=False, usage=None, max_tokens=1200):
     if provider == "ollama":
         url = (base_url or "http://localhost:11434") + "/api/generate"
         body = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.3}}
@@ -39,7 +39,7 @@ def call(provider, model, prompt, base_url=None, api_key=None, timeout=120, json
         return d["response"]
     if provider == "anthropic":
         req = urllib.request.Request((base_url or "https://api.anthropic.com") + "/v1/messages",
-                                     json.dumps({"model": model, "max_tokens": 1200, "messages": [{"role": "user", "content": prompt}]}).encode(),
+                                     json.dumps({"model": model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}).encode(),
                                      {"Content-Type": "application/json", "x-api-key": api_key or os.getenv("ANTHROPIC_API_KEY", ""), "anthropic-version": "2023-06-01"})
         d = json.loads(urllib.request.urlopen(req, timeout=timeout).read())
         _usage(usage, (d.get("usage") or {}).get("input_tokens"), (d.get("usage") or {}).get("output_tokens"))

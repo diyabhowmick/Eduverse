@@ -20,10 +20,11 @@ export default function Queue() {
                 <td className="acts"><Link className="btn primary sm" to={'/review/books/' + b.id}>{p.approved || p.rejected ? 'Continue review' : 'Start review'}</Link></td></tr>) })}</tbody></table>
           {data && !ready.length && <div className="empty">Nothing to review right now</div>}</div>
         <div className="card"><div className="card-h"><h3>Not ready yet</h3><span className="sub">Extraction running, or sent back for a fix</span></div>
-          <table className="t"><thead><tr><th>Book</th><th>Status</th><th>Note</th></tr></thead>
+          <table className="t"><thead><tr><th>Book</th><th>Status</th><th>Note</th><th /></tr></thead>
             <tbody>{waiting.map(b => <tr key={b.id}><td><b>{b.title}</b><div className="muted">{b.board}, Class {b.grade}</div></td>
               <td><Tag s={b.status === 'in_review' ? 'processing' : b.status}>{b.status === 'rejected' ? 'Sent back' : 'Waiting for extraction'}</Tag></td>
-              <td className="muted">{b.review_note || 'Appears in the queue when M1 and the converter finish'}</td></tr>)}</tbody></table>
+              <td className="muted">{b.review_note || 'Appears in the queue when M1 and the converter finish'}</td>
+              <td className="acts">{b.has_content && <Link className="btn sm" to={'/review/books/' + b.id}>View pages</Link>}</td></tr>)}</tbody></table>
           {data && !waiting.length && <div className="empty">Nothing waiting</div>}</div>
       </div>
     </Page>
