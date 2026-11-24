@@ -226,14 +226,43 @@ def _markers(text: str) -> str:
     return _STRAY_MARK.sub("", text)
 
 
+def heal_split_maths(text: str) -> str:
+    """Text saved by an older clean-up could cut one formula into pieces: '$\\left($ 2, $\\frac{7}{2}, 6 \\right) \\in$ S'.
+    No piece can be drawn on its own. A piece with \\left but no \\right, or an open brace, is joined with what follows
+    until the formula is whole again: '$\\left( 2, \\frac{7}{2}, 6 \\right) \\in$ S'."""
+    parts, last = [], 0
+    for m in _MATH.finditer(text):
+        parts.append(("t", text[last:m.start()])); parts.append(("m", m.group())); last = m.end()
+    parts.append(("t", text[last:]))
+    out, i = [], 0
+    while i < len(parts):
+        kind, s = parts[i]
+        if kind == "m" and not s.startswith("$$") and _unbalanced(s[1:-1]):
+            inner, j = s[1:-1], i + 1
+            while j < len(parts) and j <= i + 8 and _unbalanced(inner):
+                k2, s2 = parts[j]
+                if k2 == "t" and "\n" in s2:
+                    break  # never across a line
+                inner += s2 if k2 == "t" else s2.strip("$")
+                j += 1
+            if not _unbalanced(inner):
+                out.append("$" + inner + "$"); i = j; continue
+        out.append(s); i += 1
+    return "".join(out)
+
+
 def clean(text) -> str:
     """Model output -> text the screen can draw. Idempotent: cleaning clean text changes nothing."""
     text = str(text or "")
+    # A character the model wrote as a code (ω for ω) instead of the character itself.
+    text = re.sub(r"\\u([0-9a-fA-F]{4})(?![0-9a-fA-F])", lambda m: chr(int(m.group(1), 16)), text)
+    text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32 or c in "\x0c\x08\r")  # other control characters
     text = _LEGACY_TABLE.sub(_join_legacy_table, text)
     text = _markers(text)
     text = re.sub(r"<br\s*/?>|</br>", "\n", text, flags=re.I)
     text = _restore_escapes(text).replace("\\newline", "\n")
     text = _markdown_tables(text)  # before the $ split, so a cell holding $maths$ does not break the table apart
+    text = heal_split_maths(text)
     out, last = [], 0
     for m in _MATH.finditer(text):
         out.append(_plain(text[last:m.start()]))
@@ -304,10 +333,20 @@ _FIG_ANY = re.compile(r"\[\[\s*fig(?:ure)?\s*[:#]?\s*(\d+)\s*\]\]|\[\s*fig(?:ure
 def fig_markers(text: str, count: int | None = None, offset: int = 0) -> str:
     """[[figure 1]], [fig:1] -> [[fig:1]], each on its own line. offset renumbers (a question carried over a page break
     numbers its figures on from the first page's); a marker for a figure that does not exist (beyond count) goes."""
-    def one(m):
-        n = int(m.group(1) or m.group(2)) + offset
-        return f"\n[[fig:{n}]]\n" if count is None or 1 <= n <= count + offset else "\n"
-    text = _FIG_ANY.sub(one, text)
+    def fix(inside_maths):
+        def one(m):
+            n = int(m.group(1) or m.group(2)) + offset
+            keep = count is None or 1 <= n <= count + offset
+            if inside_maths:  # a picture in a table cell: \text{[[fig:2]]} stays in its cell
+                return f"[[fig:{n}]]" if keep else ""
+            return f"\n[[fig:{n}]]\n" if keep else "\n"
+        return one
+    parts, last = [], 0
+    for m in _MATH.finditer(text):
+        parts.append(_FIG_ANY.sub(fix(False), text[last:m.start()]))
+        parts.append(_FIG_ANY.sub(fix(True), m.group())); last = m.end()
+    parts.append(_FIG_ANY.sub(fix(False), text[last:]))
+    text = "".join(parts)
     text = re.sub(r"\s*\n\s*(\[\[fig:\d+\]\])\s*\n\s*", r"\n\1\n", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 

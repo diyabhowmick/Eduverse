@@ -31,13 +31,15 @@ Do not repeat the options inside text. Statements labelled A. B. C. D. or (i) (i
 Words stay plain words: never use \\textit, \\textbf, \\emph or any other LaTeX outside $ signs, and never put a sentence inside $ signs. Write italic names such as Selaginella as ordinary words. Keep the spaces between words.
 Maths exactly as printed: a fraction stays a fraction ($\\frac{{31}}{{11x}}$), a limit keeps its subscript ($\\lim_{{t \\to x}}$), and every power, subscript, sign, bracket and set symbol is kept ($x^{{10}}$, $\\mathbb{{R}}^2$, $(0, \\infty)$). Never simplify, reorder or rewrite. Always pair \\left with \\right.
 Keep the paper's layout: each statement, list entry and option on its own line; a system of equations as $$\\begin{{aligned}} ax + by &= 1 \\\\ bx + cy &= -1 \\end{{aligned}}$$ with one equation per line; a long displayed formula on its own line inside $$ signs.
-Chemical formulas and ions in maths: $\\mathrm{{H_2SO_4}}$, $\\mathrm{{SO_4^{{2-}}}}$, $\\mathrm{{H_3O^+}}$.
-figures holds every part of the question that cannot be written faithfully as text or LaTeX, as boxes [x0, y0, x1, y1] in fractions of image 1 from 0 to 1, in printed order, or [] if there is none. These are always figures: diagrams, graphs, circuits, apparatus, chemical structures, reaction schemes drawn with structures (take the whole scheme with the reagents over and under its arrows), and a List-I / List-II in which any entry is a structure or a graph (take both lists as one figure). Never write a structure in code such as \\chemfig, and never write that part in text as well.
-Put [[fig:1]], [[fig:2]] on its own line in text at exactly the place each figure is printed, so the question reads in the same order as the paper. Each box includes the whole figure with all its labels, arrows and axis values, and nothing else. A table of words or numbers is not a figure: write it out in text.
+Chemical formulas, ions and complexes in maths with every subscript and charge: $\\mathrm{{H_2SO_4}}$, $\\mathrm{{SO_4^{{2-}}}}$, $\\mathrm{{H_3O^+}}$, $\\mathrm{{[Co(NH_3)_5Cl]SO_4}}$.
+An option printed over several lines keeps those lines: for example "Set-I: ..." on one line and "Set-II: ..." on the next, separated by a line break in its text.
+figures holds every part of the question that cannot be written faithfully as text or LaTeX, as boxes [x0, y0, x1, y1] in fractions of image 1 from 0 to 1, in printed order, or [] if there is none. These are always figures: diagrams, graphs, circuits, apparatus, chemical structures, reaction schemes drawn with structures (take the whole scheme with the reagents over and under its arrows), and a List-I / List-II in which any entry is a structure or a graph. For such a list take the whole block, from the List-I and List-II headings to the last entry, as ONE figure, and write nothing of it in text: no table, no reagents, no entries. Never write a structure in code such as \\chemfig.
+Never make a figure of something you have written in text: an equation, a reaction or mechanism written with arrows and rate constants, a formula, or a table of words or numbers is written in text only, never also cut out as a figure.
+Put [[fig:1]], [[fig:2]] on its own line in text at exactly the place each figure is printed, so the question reads in the same order as the paper. Each box includes the whole figure with all its labels, arrows and axis values, and nothing else: not the question number, not the next question.
 Write a table (for example Match List-I with List-II) on its own lines inside $$ signs as a LaTeX array with ruled borders, one printed row per line:
 $$\\begin{{array}}{{|l|l|l|l|}} \\hline \\text{{List-I}} & & \\text{{List-II}} & \\\\ \\hline \\text{{A.}} & \\text{{Lenticels}} & \\text{{(i)}} & \\text{{Phellogen}} \\\\ \\hline \\end{{array}}$$
 Put words in a cell inside \\text{{}} and maths in a cell without $ signs. Keep every row and column, in printed order, and the sentence after the table as ordinary text.
-If the options are pictures (graphs, circuits, structures), give each option its own figure_box around just its picture, and set its text to any words printed with that picture, or "" if there are none. The question's figures then cover only the question's own figures.
+If the options are pictures (graphs, circuits, structures), give each option its own figure_box around just its picture, which sits beside or just below its own (A), (B), (C) or (D) mark, and set its text to any words printed with that picture, or "" if there are none. The question's figures then cover only the question's own figures.
 Keep questions in printed order. Numbering may start again at 1 in a new section or subject: keep the printed number, never renumber.
 continued is true only when the question began on the previous page. Never invent a question.
 The page edge may cut off the end of a line. Never guess a number, sign, symbol or formula: where any is cut off or cannot be read, write [unclear] at that spot. Only finish a plain English word when it is certain."""
@@ -126,9 +128,15 @@ def note_usage(paper_id, kind, model, usage):
         db.commit()
 
 
-def read_page(page, i, total, exam, section, model, base_url, key, only=None, paper_id=None):
-    which = f"only question numbers {', '.join(only)}, which were missed or lost their options on an earlier read" if only else "every question on this page"
-    prompt = READ_PROMPT.format(page=i, pages=total, exam=exam, section=section or "there is no previous page or heading yet", which=which)
+REDO_STRUCTURES = ("\nAn earlier read of this question wrote a chemical structure or drawing as code such as \\chemfig, which cannot be shown. "
+                   "This time every structure, reaction scheme with structures, and List-I / List-II containing structures must be a figure "
+                   "box with [[fig:N]] in text, and none of it written in text.")
+
+
+def read_page(page, i, total, exam, section, model, base_url, key, only=None, paper_id=None, note=""):
+    which = (f"only question number {', '.join(only)}" if note else
+             f"only question numbers {', '.join(only)}, which were missed or lost their options on an earlier read") if only else "every question on this page"
+    prompt = READ_PROMPT.format(page=i, pages=total, exam=exam, section=section or "there is no previous page or heading yet", which=which) + note
     usage = {}
     found = openai_json(model, prompt, page_images(page), base_url=base_url, api_key=key, usage=usage).get("questions") or []
     if paper_id:
@@ -192,31 +200,118 @@ def drawn_regions(page) -> list[tuple]:
 
 
 def text_lines(page) -> list[tuple]:
-    """Every printed line of text as a box, in fractions of the page: the labels a diagram may have beside it."""
+    """Every printed line of text as (x0, y0, x1, y1, text), in fractions of the page: the labels a diagram may have
+    beside it, and the question numbers and (A) (B) marks used to find where things are."""
     r = page.rect
     out = []
     try:
         for b in page.get_text("dict")["blocks"]:
             for ln in b.get("lines", []):
                 x0, y0, x1, y1 = ln["bbox"]
-                out.append((x0 / r.width, y0 / r.height, x1 / r.width, y1 / r.height))
+                t = "".join(s.get("text", "") for s in ln.get("spans", []))
+                out.append((x0 / r.width, y0 / r.height, x1 / r.width, y1 / r.height, t))
     except Exception:
         pass
     return out
+
+
+def page_words(page) -> list[tuple]:
+    """Every word as (x0, y0, x1, y1, word), in fractions of the page."""
+    r = page.rect
+    try:
+        return [(w[0] / r.width, w[1] / r.height, w[2] / r.width, w[3] / r.height, w[4]) for w in page.get_text("words")]
+    except Exception:
+        return []
+
+
+def _qmark(n: str) -> re.Pattern:
+    """How a question number is printed at the start of its line: Q.3, Q3, Q 3, Question 3, 3. or 3)"""
+    n = re.escape(str(n))
+    return re.compile(rf"^\s*(?:Q(?:uestion|ues|n)?\s*\.?\s*{n}(?![0-9])\s*[.):]?|{n}\s*[.)])(?:\s|$)", re.I)
+
+
+def question_band(lines, number, next_number=None):
+    """(top, bottom) of the stretch of the page where question `number` is printed, from its number to the next
+    question's, as fractions of the page. None when the number cannot be found at the left of a line."""
+    if not as_int(number):
+        return None
+    lines = sorted(lines, key=lambda l: (l[1], l[0]))
+    start = next((l for l in lines if l[0] < .3 and _qmark(number).match(l[4])), None)
+    if start is None:
+        return None
+    end = None
+    if next_number and as_int(next_number):
+        end = next((l for l in lines if l[1] > start[3] - .002 and l[0] < .3 and _qmark(next_number).match(l[4])), None)
+    return (start[1] - .004, (end[1] - .003) if end else .97)
+
+
+_OPT_LABELS = {k: {f"({u})", f"({k})", f"({d})", f"{u}.", f"{u})", f"{k})", f"{d}.", f"{d})"} for k, u, d in zip("abcdefgh", "ABCDEFGH", "12345678")}
+
+
+def _in_band(b, band):
+    return band is None or band[0] <= (b[1] + b[3]) / 2 <= band[1]
+
+
+def option_box(key, band, words, regions, images, lines):
+    """The picture of option `key`, found from the page itself: its printed mark ((A), (1), A.) inside the question's
+    stretch, and the drawing or picture in that mark's cell, which runs right to the next mark on the same row and down
+    to the next row of marks. Labels printed in the drawing (OMe, Ph, HO) come with it. None if it cannot be found."""
+    if band is None:
+        return None
+    marks = [w for w in words if _in_band(w, band) and any(w[4] in s for s in _OPT_LABELS.values())]
+    mine = [w for w in marks if w[4] in _OPT_LABELS.get(key, ())]
+    pics = [b for b in list(regions) + list(images) if _in_band(b, band)]
+    for m in mine:
+        cy, h = (m[1] + m[3]) / 2, m[3] - m[1]
+        right = min([w[0] for w in marks if abs((w[1] + w[3]) / 2 - cy) < 1.5 * h and w[0] > m[2]] or [1.0])
+        below = [w[1] for w in marks if w[1] > m[3] + .004 and m[0] - .05 <= w[0] < right]
+        above = [w[3] for w in marks if w[3] < m[1] - .004 and m[0] - .05 <= w[0] < right]
+        top = max([band[0]] + above)
+        bottom = min([band[1]] + below)
+        # The picture sits level with its mark or starts just under it; one higher up is the question's own figure.
+        level = lambda b: b[1] <= m[3] + .03 and b[3] >= m[1] - .03 or m[3] - .005 <= b[1] <= m[3] + .04
+        cell = [b for b in pics if m[0] - .01 <= (b[0] + b[2]) / 2 < right and top <= (b[1] + b[3]) / 2 <= bottom and level(b)]
+        if not cell:
+            continue
+        box = [min(b[0] for b in cell), min(b[1] for b in cell), max(b[2] for b in cell), max(b[3] for b in cell)]
+        for l in lines:  # the chemistry or axis labels around the drawing, never the (A) mark itself
+            if _OPT_LABELS and any(l[4].strip() in s for s in _OPT_LABELS.values()):
+                continue
+            if box[0] - .045 <= l[0] and l[2] <= min(box[2] + .045, right) and box[1] - .025 <= l[1] and l[3] <= box[3] + .025:
+                box = [min(box[0], l[0]), min(box[1], l[1]), max(box[2], l[2]), max(box[3], l[3])]
+        return [box[0] - .006, box[1] - .006, box[2] + .006, box[3] + .006]
+    return None
+
+
+def _page_info(doc, page_no, cache):
+    if page_no not in cache:
+        pg = doc[page_no - 1]
+        cache[page_no] = {"regions": drawn_regions(pg), "lines": text_lines(pg), "words": page_words(pg)}
+    return cache[page_no]
+
+
+def _render(doc, page_no, box) -> bytes | None:
+    import pymupdf
+    pg = doc[page_no - 1]; r = pg.rect
+    clip = pymupdf.Rect(box[0] * r.width, box[1] * r.height, box[2] * r.width, box[3] * r.height) & r
+    if clip.is_empty or clip.width <= 8 or clip.height <= 8:
+        return None
+    return pg.get_pixmap(dpi=200, clip=clip).tobytes("png")
 
 
 def snap(box, images, drawn=(), lines=()):
     """Models give rough coordinates. When a real picture or a drawn diagram sits there, use its exact edges.
     A drawn diagram also takes in the short labels printed just beside its lines (R, A, 30 deg, axis values): a text line
     counts only when the whole line sits in that narrow band, so a line of the question's own text never does."""
-    x0, y0, x1, y1 = box[0] - .04, box[1] - .04, box[2] + .04, box[3] + .04
+    x0, y0, x1, y1 = box[0] - .025, box[1] - .025, box[2] + .025, box[3] + .025
     area = (x1 - x0) * (y1 - y0)
     hits, any_drawn = [], False
     for b, is_drawn in [(b, False) for b in images] + [(b, True) for b in drawn]:
         w, h = min(x1, b[2]) - max(x0, b[0]), min(y1, b[3]) - max(y0, b[1])
         size = (b[2] - b[0]) * (b[3] - b[1])
-        # Most of the region lies in the model's box, and it is not a whole table grid or block far bigger than the box.
-        if w > 0 and h > 0 and w * h >= .3 * size and size <= 3 * area:
+        # Most of the region lies in the model's box (a neighbour it only grazes stays out), and it is not a whole
+        # table grid or block far bigger than the box.
+        if w > 0 and h > 0 and w * h >= .4 * size and size <= 3 * area:
             hits.append(b); any_drawn |= is_drawn
     if not hits:
         return [box[0] - .005, box[1] - .005, box[2] + .005, box[3] + .005]
@@ -230,24 +325,38 @@ def snap(box, images, drawn=(), lines=()):
     return [out[0] - pad, out[1] - pad, out[2] + pad, out[3] + pad]
 
 
-def crop(doc, page_no, box, images, drawn_cache) -> bytes | None:
-    """The figure at box on a page, snapped to what is really printed there, as a PNG at print quality."""
-    import pymupdf
+def crop(doc, page_no, box, images, cache, band=None) -> bytes | None:
+    """The figure at box on a page, snapped to what is really printed there, as a PNG at print quality.
+    band, when known, is the stretch of the page the question occupies: the figure is kept inside it, so a rough box
+    can never take in the next question."""
     try:
         box = [float(v) for v in box]
     except (TypeError, ValueError):
         return None
     if len(box) != 4 or not (0 < page_no <= len(doc)):
         return None
-    pg = doc[page_no - 1]
-    if page_no not in drawn_cache:
-        drawn_cache[page_no] = (drawn_regions(pg), text_lines(pg))
-    box = snap(box, images.get(page_no, []), *drawn_cache[page_no])
-    r = pg.rect
-    clip = pymupdf.Rect(box[0] * r.width, box[1] * r.height, box[2] * r.width, box[3] * r.height) & r
-    if clip.is_empty or clip.width <= 8 or clip.height <= 8:
+    info = _page_info(doc, page_no, cache)
+    regions, imgs, lines = info["regions"], images.get(page_no, []), info["lines"]
+    if band and box[1] < band[1] and box[3] > band[0]:  # the box overlaps the question: keep to the question
+        box = [box[0], max(box[1], band[0]), box[2], min(box[3], band[1])]
+        regions = [b for b in regions if _in_band(b, band)]
+        imgs = [b for b in imgs if _in_band(b, band)]
+        lines = [l for l in lines if _in_band(l, band)]
+    box = snap(box, imgs, regions, lines)
+    if band and box[1] < band[1] and box[3] > band[0]:
+        box = [box[0], max(box[1], band[0]), box[2], min(box[3], band[1])]
+    return _render(doc, page_no, box)
+
+
+def crop_option(doc, page_no, key, box, images, cache, band=None) -> bytes | None:
+    """An option's picture: found from its printed (A) (B) mark when possible, else from the model's box."""
+    if not (0 < page_no <= len(doc)):
         return None
-    return pg.get_pixmap(dpi=200, clip=clip).tobytes("png")
+    info = _page_info(doc, page_no, cache)
+    found = option_box(key, band, info["words"], info["regions"], images.get(page_no, []), info["lines"])
+    if found:
+        return _render(doc, page_no, found)
+    return crop(doc, page_no, box, images, cache, band)
 
 
 BIG_JUMP = 10  # a gap wider than this is a misread number, not ten skipped questions
@@ -416,6 +525,23 @@ def read(paper_id: int):
                         d["section"] = d["section"] or w["section"] or prior
                         place(rows, w["run"], w["n"], d, with_figures(d, q, pg))
                 merge_duplicates(rows)
+            # A structure written as code (\chemfig) can never be shown. Ask once more for just that question, saying why.
+            bad = [(idx, d) for idx, (d, _) in enumerate(rows) if UNDRAWABLE.search(d["text"] + " ".join(o["text"] for o in d["options"]))]
+            if bad:
+                progress(db, p, ai_stage="Redoing questions with structures", ai_done=0, ai_total=len(bad))
+            for done_n, (idx, d) in enumerate(bad, 1):
+                again = read_page(doc[d["page"] - 1], d["page"], total, exam, d["section"], model, base_url, key, only=[d["number"]], paper_id=paper_id,
+                                  note=REDO_STRUCTURES)
+                for q in again:
+                    if as_int(question_number(q.get("number"))) != as_int(d["number"]):
+                        continue
+                    q["continued"] = False
+                    nd = norm_question(q, d["position"], d["page"])
+                    nd["section"] = d["section"]
+                    if not UNDRAWABLE.search(nd["text"] + " ".join(o["text"] for o in nd["options"])):
+                        rows[idx] = (nd, with_figures(nd, q, d["page"]))
+                    break
+                progress(db, p, ai_done=done_n)
             # Printed order, never sorted by number: sorting mixed up papers whose sections each start again at 1.
             for pos, (d, _) in enumerate(rows):
                 d["position"] = pos
@@ -427,14 +553,17 @@ def read(paper_id: int):
             db.flush()
             images, drawn = embedded_images(doc), {}
             undrawable = []
-            for data, figs in rows:
+            for idx, (data, figs) in enumerate(rows):
                 boxes = {o["key"]: o.pop("_box") for o in data["options"] if "_box" in o}
                 q = Question(paper_id=paper_id, **data); db.add(q); db.flush()
+                # Where this question sits on its first page, from its printed number to the next question's.
+                nxt = rows[idx + 1][0]["number"] if idx + 1 < len(rows) and rows[idx + 1][0]["page"] == data["page"] else None
+                band = question_band(_page_info(doc, data["page"], drawn)["lines"], data["number"], nxt) if 0 < data["page"] <= len(doc) else None
                 # Figure 1 is figure_key, as before; figures 2, 3, ... go in q.figures. A figure that cannot be cut out
                 # keeps its place as "", so [[fig:N]] in the text still points at the right one.
                 extra = []
                 for n, (pg_no, box) in enumerate(figs or [], 1):
-                    png = crop(doc, pg_no, box, images, drawn)
+                    png = crop(doc, pg_no, box, images, drawn, band if pg_no == data["page"] else None)
                     key_n = f"papers/{p.book_id}/figures/{paper_id}_{q.id}.png" if n == 1 else f"papers/{p.book_id}/figures/{paper_id}_{q.id}_f{n}.png"
                     if png:
                         store.put(key_n, png)
@@ -449,7 +578,7 @@ def read(paper_id: int):
                     opts = []
                     for o in data["options"]:
                         o = dict(o)
-                        png = crop(doc, data["page"], boxes[o["key"]], images, drawn) if o["key"] in boxes else None
+                        png = crop_option(doc, data["page"], o["key"], boxes[o["key"]], images, drawn, band) if o["key"] in boxes else None
                         if png:
                             o["figure"] = f"papers/{p.book_id}/figures/{paper_id}_{q.id}_{o['key']}.png"
                             store.put(o["figure"], png)

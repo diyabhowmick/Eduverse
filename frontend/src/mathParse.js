@@ -32,9 +32,36 @@ const FIG = /\[\[fig:(\d+)\]\]/g
 // The figure numbers whose [[fig:N]] mark is in the text, so the rest can be shown after it.
 export const figureMarks = text => new Set([...String(text ?? '').matchAll(FIG)].map(m => +m[1]))
 
+// \left without its \right, or an open brace: a piece of a formula, not a whole one.
+export const unbalanced = s => (s.match(/\\left(?![a-z])/g) || []).length > (s.match(/\\right(?![a-z])/g) || []).length
+  || (s.match(/\{/g) || []).length > (s.match(/\}/g) || []).length
+
+// An older clean-up could cut one formula into pieces: $\left($ 2, $\frac{7}{2}, 6 \right) \in$ S. Join them again.
+export function healSplit(src) {
+  const re = /\$\$[\s\S]+?\$\$|\$(?:[^$\\]|\\[\s\S])+?\$/g
+  const parts = []; let last = 0, m
+  while ((m = re.exec(src))) { parts.push(['t', src.slice(last, m.index)], ['m', m[0]]); last = re.lastIndex }
+  parts.push(['t', src.slice(last)])
+  const out = []
+  for (let i = 0; i < parts.length; i++) {
+    const [k, s] = parts[i]
+    if (k === 'm' && !s.startsWith('$$') && unbalanced(s.slice(1, -1))) {
+      let inner = s.slice(1, -1), j = i + 1
+      while (j < parts.length && j <= i + 8 && unbalanced(inner)) {
+        const [k2, s2] = parts[j]
+        if (k2 === 't' && s2.includes('\n')) break
+        inner += k2 === 't' ? s2 : s2.replace(/^\$|\$$/g, ''); j++
+      }
+      if (!unbalanced(inner)) { out.push('$' + inner + '$'); i = j - 1; continue }
+    }
+    out.push(s)
+  }
+  return out.join('')
+}
+
 // -> [{kind: 'text' | 'inline' | 'display' | 'figure', value}]; a figure's value is its number
 export function splitMath(text) {
-  const src = repairLegacy(text)
+  const src = healSplit(repairLegacy(text).replace(/\\u([0-9a-fA-F]{4})(?![0-9a-fA-F])/g, (_, h) => String.fromCharCode(parseInt(h, 16))))
   const re = /\$\$([\s\S]+?)\$\$|\$(\\begin\{[\s\S]+?\\end\{[A-Za-z*]+\})\$|\$((?:[^$\\\n]|\\[^\n])+?)\$/g
   const out = []; let last = 0, m
   const pushText = s => {

@@ -49,52 +49,73 @@ export const Icon = ({ n, s = 18 }) => (
 // Text with maths between $ signs, as the AI paper reader writes it. $$...$$ is a block of its own, and a
 // $$\begin{array}...\end{array}$$ table is drawn as a real table so long cells wrap (see mathParse.js).
 const tex = s => ({ __html: katex.renderToString(s, { throwOnError: false }) })
-const Cell = ({ c }) => { const p = cellPlain(c); return p != null ? p : <span dangerouslySetInnerHTML={tex(c)} /> }
-function MathBlock({ value }) {
+// Printed papers set fractions, limits, sums and integrals at full size even inside a sentence; KaTeX shrinks them
+// unless asked, which made options such as 31/11x hard to read.
+const BIG = /\\(?:d?frac|tfrac|lim|sum|int|prod|binom|sqrt\[)/
+const inlineTex = s => tex(BIG.test(s) && !/\\displaystyle|\\textstyle/.test(s) ? '\\displaystyle ' + s : s)
+// A long displayed formula can only wrap at top-level = + and the like. \left \right make one unbreakable group, so a
+// long one (a set written over a whole line) drops them and keeps plain brackets.
+const unpaired = s => s.length > 70 && !/\\begin\{/.test(s)
+  ? s.replace(/\\(?:left|right)\s*\./g, '').replace(/\\(?:left|right)(?![a-z])\s*/g, '') : s
+function Cell({ c, figure }) {
+  const f = /\[\[fig:(\d+)\]\]/.exec(c)
+  if (f && figure) { // a picture in a table cell, as printed
+    const rest = c.replace(f[0], '').replace(/\\text\{\s*\}/g, '').trim()
+    return <>{rest && <Cell c={rest} />}{figure(+f[1])}</>
+  }
+  const p = cellPlain(c); return p != null ? p : <span dangerouslySetInnerHTML={inlineTex(c)} />
+}
+function MathBlock({ value, figure }) {
   const t = parseArray(value)
   // A displayed formula is drawn at display size but in inline mode, so a long one can wrap after = or + instead of
   // running off the side; scrolling stays as the fallback for one that cannot.
-  if (!t) return <div className="mt-display" dangerouslySetInnerHTML={tex('\\displaystyle ' + value)} />
+  if (!t) return <div className="mt-display" dangerouslySetInnerHTML={tex('\\displaystyle ' + unpaired(value))} />
   return <div className="mt-table"><table><tbody>{t.rows.map((r, i) => <tr key={i}>{r.map((c, j) => t.header && i === 0
-    ? <th key={j}><Cell c={c} /></th> : <td key={j}><Cell c={c} /></td>)}</tr>)}</tbody></table></div>
+    ? <th key={j}><Cell c={c} figure={figure} /></th> : <td key={j}><Cell c={c} figure={figure} /></td>)}</tr>)}</tbody></table></div>
 }
 // figure(n) draws figure n where [[fig:n]] stands in the text. Without it, the marks are simply not shown.
 export function MathText({ text, style, figure }) {
   const parts = useMemo(() => splitMath(text), [text])
   const block = p => p?.kind === 'display' || p?.kind === 'figure'
-  return <span style={{ whiteSpace: 'pre-wrap', ...style }}>{parts.map((p, i) => p.kind === 'display' ? <MathBlock key={i} value={p.value} />
+  return <span className="mt" style={{ whiteSpace: 'pre-wrap', ...style }}>{parts.map((p, i) => p.kind === 'display' ? <MathBlock key={i} value={p.value} figure={figure} />
     : p.kind === 'figure' ? (figure ? <span key={i} className="mt-figure">{figure(p.value)}</span> : null)
-    : p.kind === 'inline' ? <span key={i} dangerouslySetInnerHTML={tex(p.value)} />
+    : p.kind === 'inline' ? <span key={i} dangerouslySetInnerHTML={inlineTex(p.value)} />
     // a block already breaks the line, so the line breaks around it in the text would show as blank lines
     : <span key={i}>{p.value.replace(block(parts[i - 1]) ? /^[ \t]*\n/ : /(?!)/, '').replace(block(parts[i + 1]) ? /\n[ \t]*$/ : /(?!)/, '')}</span>)}</span>
 }
 
-// True when some maths in the text cannot be drawn (it would show as red code), so a reviewer is told to check it.
+// The first piece of maths in the texts that cannot be drawn (it would show as red code), as {formula, reason}, so a
+// reviewer sees exactly what to fix. null when everything draws.
 export function mathError(...texts) {
   for (const t of texts) for (const p of splitMath(t)) {
     if (p.kind !== 'inline' && p.kind !== 'display') continue
     const cells = p.kind === 'display' && parseArray(p.value)
-    for (const s of cells ? cells.rows.flat().filter(c => cellPlain(c) == null) : [p.value]) {
-      try { katex.renderToString(s, { throwOnError: true }) } catch { return true }
+    for (const s of cells ? cells.rows.flat().filter(c => cellPlain(c) == null && !/\[\[fig:\d+\]\]/.test(c)) : [p.value]) {
+      try { katex.renderToString(s, { throwOnError: true }) } catch (e) {
+        return { formula: s.length > 80 ? s.slice(0, 80) + '…' : s, reason: String(e.message || e).replace(/^KaTeX parse error:\s*/, '').slice(0, 120) }
+      }
     }
   }
-  return false
+  return null
 }
 
 // A question's text with each figure where the paper prints it ([[fig:N]]), and any figure the text does not place
 // shown after it, as before. Figure 1 is q.has_figure, figures 2, 3, ... are q.more_figures.
-export function QuestionText({ q, stamp, maxHeight = 300 }) {
+export function QuestionText({ q, stamp }) {
   const have = [...(q.has_figure ? [1] : []), ...(q.more_figures || [])]
   const placed = figureMarks(q.text)
-  const img = n => have.includes(n) ? <AuthImg stamp={stamp} src={n === 1 ? `/api/exams/questions/${q.id}/figure` : `/api/exams/questions/${q.id}/figures/${n}`}
-    alt={`Figure ${n} for this question`} style={{ maxHeight, margin: '8px 0' }} /> : null
+  // Figures are shown at the size they are printed (they are cut at 200 dpi), never squeezed to a fixed height.
+  const img = n => have.includes(n) ? <AuthImg stamp={stamp} printed src={n === 1 ? `/api/exams/questions/${q.id}/figure` : `/api/exams/questions/${q.id}/figures/${n}`}
+    alt={`Figure ${n} for this question`} style={{ margin: '8px 0' }} /> : null
   return <>{q.text ? <MathText text={q.text} figure={img} /> : null}
     {have.filter(n => !placed.has(n)).map(n => <div key={n}>{img(n)}</div>)}</>
 }
 
 // A picture behind sign in. A plain img tag cannot send the sign in token.
-export function AuthImg({ src, alt = '', style, stamp }) {
-  const [url, setUrl] = useState(''); const [failed, setFailed] = useState(false)
+// printed: a figure cut from a paper at 200 dpi is shown at its printed size, a quarter larger for the screen
+// (200 dpi to 96 css px is 0.48; x1.25 = 0.6), and never wider than its column.
+export function AuthImg({ src, alt = '', style, stamp, printed }) {
+  const [url, setUrl] = useState(''); const [failed, setFailed] = useState(false); const [w, setW] = useState(0)
   useEffect(() => {
     let live = true, made = ''
     setUrl(''); setFailed(false)
@@ -103,7 +124,8 @@ export function AuthImg({ src, alt = '', style, stamp }) {
     return () => { live = false; if (made) URL.revokeObjectURL(made) }
   }, [src, stamp])
   if (failed) return <div className="muted" style={{ padding: 12 }}>Picture not available</div>
-  return url ? <img src={url} alt={alt} style={{ maxWidth: '100%', display: 'block', ...style }} /> : <div className="muted" style={{ padding: 12 }}>Loading picture</div>
+  return url ? <img src={url} alt={alt} onLoad={printed ? e => setW(Math.round(e.currentTarget.naturalWidth * 0.6)) : undefined}
+    style={{ maxWidth: '100%', display: 'block', ...(printed && w ? { width: w, height: 'auto' } : {}), ...style }} /> : <div className="muted" style={{ padding: 12 }}>Loading picture</div>
 }
 
 export function Dropzone({ file, onFile, accept, label, hint, small }) {

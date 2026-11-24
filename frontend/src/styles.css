@@ -380,3 +380,12 @@ span.chip{cursor:default}
 .mt-display .katex-display{margin:0;text-align:left}
 .mt-figure{display:block}.mt-figure img{max-width:100%}
 .mt-display{text-align:center}
+
+/* Question text and options: readable size and even spacing (paper editor, past papers, practice, tests) */
+.mt{line-height:1.65}
+.mt .katex{font-size:1.08em}
+.q-opts{display:grid;gap:8px;margin-top:10px;font-size:15px}
+.q-opt{display:flex;gap:8px;align-items:baseline}
+.q-opt-k{flex:none;min-width:26px;font-weight:600}
+.mt-table td,.mt-table th{line-height:1.5}
+.mt-table img{max-width:100%}

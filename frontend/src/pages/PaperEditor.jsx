@@ -55,9 +55,11 @@ function QEdit({ q, chapters, onSave, onDelete, locked, onPage, onCrop, onNoFigu
   if (!open) return <div className={'card' + (q.confidence === 'low' ? ' flagged' : '')} style={{ marginBottom: 8 }}><div className="card-b" style={{ display: 'flex', gap: 10 }}>
     <b style={{ minWidth: 34 }}>{q.number ? 'Q' + q.number : 'Q'}</b>
     <div style={{ flex: 1, minWidth: 0 }}><div>{q.text || q.has_figure ? <QuestionText q={q} stamp={q.figure_stamp} maxHeight={260} /> : <span className="muted">No question text</span>}</div>
-      {mathError(q.text, ...(q.options || []).map(o => o.text)) && <div className="tag bad" style={{ margin: '6px 0' }}>A formula here cannot be drawn. Compare with the original and fix it, or cut that part as a figure.</div>}
-      {q.options?.length > 0 && <div style={{ fontSize: 13, display: 'grid', gap: 2, marginTop: 4 }}>{q.options.map(o => <div key={o.key}>({o.key}) <MathText text={o.text} />
-        {o.has_figure && <AuthImg stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Picture for option ' + o.key} style={{ display: 'block', margin: '4px 0 6px 22px', maxHeight: 140 }} />}</div>)}</div>}
+      {(e => e && <div className="tag bad" style={{ margin: '6px 0', whiteSpace: 'normal', display: 'block', lineHeight: 1.5 }}>
+        This formula cannot be drawn: <code>{e.formula}</code> ({e.reason}). Fix it with Edit, comparing with the original, or cut that part as a figure.</div>)(mathError(q.text, ...(q.options || []).map(o => o.text)))}
+      {q.options?.length > 0 && <div className="q-opts">{q.options.map(o => <div key={o.key} className="q-opt"><span className="q-opt-k">({o.key})</span>
+        <div style={{ minWidth: 0 }}><MathText text={o.text} />
+          {o.has_figure && <AuthImg printed stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Picture for option ' + o.key} style={{ marginTop: o.text ? 4 : 0 }} />}</div></div>)}</div>}
       <div style={{ fontSize: 13, marginTop: 6 }}>{q.answer ? <span>Answer: <b><MathText text={q.answer} /></b></span> : <span className="tag warn">No answer</span>}
         {src && <span className={'tag ' + src[1]} style={{ marginLeft: 6 }}>{src[0]}</span>}
         {q.answer_source === 'ai' && q.confidence && <span className={'tag ' + (q.confidence === 'low' ? 'bad' : q.confidence === 'medium' ? 'warn' : 'ok')} style={{ marginLeft: 6 }}>{q.confidence} confidence</span>}
