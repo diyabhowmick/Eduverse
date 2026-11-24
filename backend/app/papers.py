@@ -14,6 +14,9 @@ INLINE_OPT_RE = re.compile(r"\(([a-dA-D1-4])\)\s*")
 KEY_HEAD_RE = re.compile(r"^\s*(?:answer\s*keys?|answers?|key)\s*:?\s*$", re.I)
 KEY_RE = re.compile(r"(?<![\d.])(?:Q\s*)?(\d{1,3})\s*(?:[\.\):\-]\s*\(?(-?\d+(?:\.\d+)?|[a-dA-D])\)?|\s+\(?([a-dA-D])\)?)(?![A-Za-z0-9])")
 ANS_RE = re.compile(r"^\s*(?:ans(?:wer)?|correct answer|key)\s*[:.\-]\s*(.*)$", re.I)
+# "Correct Option: A" printed under each question of a solved paper. It is not part of the question or its last option,
+# and it is not taken as the answer key either: everything up to the next question (its solution) is skipped.
+CORRECT_RE = re.compile(r"^\s*correct\s+(?:option|answer|choice)s?\s*[:.\-]", re.I)
 SOL_RE = re.compile(r"^\s*(?:sol(?:ution)?|explanation|hint)\s*[:.\-]\s*(.*)$", re.I)
 SEC_RE = re.compile(r"^\s*(?:[A-Za-z&]+\s+){0,2}?(section|part)\s+([A-Z]|[IVX]+|\d+)\b.*$", re.I)
 MARKS_RE = re.compile(r"[\[\(]\s*(\d+(?:\.\d+)?)\s*marks?\s*[\]\)]\s*$", re.I)
@@ -152,7 +155,7 @@ def _option_run(first: str, text: str, paren: bool) -> list[tuple[str, str]]:
     while i + 1 < len(seq):
         nk = seq[i + 1].upper() if first.isupper() else seq[i + 1]
         mark = rf"\(\s*{nk}\s*\)" if paren else rf"(?<![A-Za-z0-9]){nk}\s*[.)]"
-        m = re.search(r"(?:^|\s)" + mark + r"\s+", out[-1][1])
+        m = re.search(r"(?:^|\s)" + mark + r"(?:\s+|$)", out[-1][1])
         if not m:
             break
         k, t = out[-1]
@@ -209,6 +212,10 @@ def split_questions(text: str) -> list[dict]:
             mode = "q"; continue
         if cur is None:
             continue  # paper header: instructions, time, max marks
+        if CORRECT_RE.match(line):
+            mode = "x"; continue
+        if mode == "x":
+            continue
         a = ANS_RE.match(line)
         if a:
             cur["answer"] = a.group(1); mode = "a"; continue
@@ -242,6 +249,20 @@ def split_questions(text: str) -> list[dict]:
     close()
     apply_key(out, key)
     return out
+
+
+_HOLE = re.compile(r"(?:^|[\s(])[,.;:=](?:\s+[,.;:=])|\b(?:of|is|at|be|as|and|are|has|by|to|from)\s+[,.;](?=\s|$)|\(\s*\)")
+
+
+def lost_maths(rows: list[dict]) -> bool:
+    """True when the file's text layer has no formulas: papers printed from web pages (MathJax) or typeset with fonts the
+    reader cannot decode draw every formula as lines. The words survive, the maths leaves holes ("consists of , , and .")
+    and options come out empty. Only reading the page as a picture gets them back."""
+    if not rows:
+        return False
+    bad = sum(1 for q in rows if _HOLE.search(q.get("text") or "") or
+              (q.get("options") and sum(1 for o in q["options"] if not (o.get("text") or "").strip()) >= 2))
+    return bad >= max(2, len(rows) // 5)
 
 
 # ---------------- chapter tagging ----------------

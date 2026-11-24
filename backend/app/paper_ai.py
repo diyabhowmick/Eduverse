@@ -21,12 +21,13 @@ Return JSON: {{"questions": [{{
  "text": "the question only, never its options, which go in options. Write any table out as described below, and put [[fig:1]], [[fig:2]] where each figure is printed. Write all maths as LaTeX between $ signs, e.g. $x^2+1$. Do not solve or change anything",
  "options": [{{"key": "a", "text": "the option's text only, without its (a) or a. mark, maths in $ signs", "figure_box": null}}],
  "type": "mcq, multi (more than one correct), numeric (no options, the answer is a typed number) or written",
- "answer": "only if the answer is printed on this page, else empty",
  "marks": 0,
  "figures": [[0, 0, 1, 1]],
  "continued": false
 }}]}}
 Option keys are lower case a, b, c, d in printed order, even if the paper prints (1) (2) (3) (4) or (A) (B). Options often sit several on one line, or follow statements such as A. B. C. D. inside the question: always capture all of them.
+Every option is read in full from the page, formulas included: an option printed only as a formula, such as (B) $-0.67\\,mgR_e$ or (A) $\\frac{{4Mg}}{{k}}$, is written as that formula, never left empty. Read the zoomed images for small subscripts and fractions.
+A solved paper prints "Correct Option: A", "Answer:" or "Solution:" and worked steps after each question. None of that is part of the question: leave it out of text and options entirely, including any formulas, figures and diagrams inside a solution, and never make a question of it.
 Do not repeat the options inside text. Statements labelled A. B. C. D. or (i) (ii) that the options refer to belong in text; the answer choices themselves do not.
 Words stay plain words: never use \\textit, \\textbf, \\emph or any other LaTeX outside $ signs, and never put a sentence inside $ signs. Write italic names such as Selaginella as ordinary words. Keep the spaces between words.
 Maths exactly as printed: a fraction stays a fraction ($\\frac{{31}}{{11x}}$), a limit keeps its subscript ($\\lim_{{t \\to x}}$), and every power, subscript, sign, bracket and set symbol is kept ($x^{{10}}$, $\\mathbb{{R}}^2$, $(0, \\infty)$). Never simplify, reorder or rewrite. Always pair \\left with \\right.
@@ -92,9 +93,7 @@ def norm_question(q: dict, position: int, page: int) -> dict:
         qtype = "written"
     if not options and qtype == "written" and re.search(r"_{2,}", text):
         qtype = "numeric"  # a blank to fill and nothing to choose from
-    answer = str(q.get("answer") or "").strip()
-    if options:
-        answer = answer.lower()
+    answer = ""  # answers printed in the paper are not taken: they come from an uploaded key, Generate answers, or a person
     try:
         marks = float(q.get("marks") or 0)
     except (TypeError, ValueError):

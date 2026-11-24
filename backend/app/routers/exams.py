@@ -125,11 +125,15 @@ def make_paper(db, pack: Book, me, year: int, session: str, title: str, text: st
     db.add(p); db.flush()
     rows = [Question(paper_id=p.id, position=i, **q) for i, q in enumerate(qs)]
     db.add_all(rows); db.flush()
+    holes = P.lost_maths(qs)
+    if holes:
+        p.ai_error = ("The formulas in this file are drawn as pictures, so reading its text left gaps in questions and empty options. "
+                      "Press Read with AI to read every page as an image and get the formulas, options and diagrams as printed.")
     tagged = retag(db, pack, rows)
     log(db, me, "paper.create", "paper", p.id, pack=pack.title, year=year, questions=len(rows))
     db.commit()
     return {**paper_out(p, len(rows)), "found": len(rows), "tagged": tagged, "key_matched": matched,
-            "warning": "" if rows else "No numbered questions were found. Use Read with AI, or add them by hand."}
+            "warning": p.ai_error if holes else "" if rows else "No numbered questions were found. Use Read with AI, or add them by hand."}
 
 
 @router.post("/{bid}/papers")

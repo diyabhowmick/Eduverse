@@ -251,12 +251,19 @@ def heal_split_maths(text: str) -> str:
     return "".join(out)
 
 
+_ANSWER_LINE = re.compile(r"\s*\b(?:Correct\s+(?:Option|Answer|Choice)s?\s*[:\-–]|Ans(?:wer)?\s*:)\s*\(?[A-Da-d1-4]\)?(?:\s*,\s*\(?[A-Da-d1-4]\)?)*\.?"
+                          r"(?:\s*Solutions?\s*[:\-–]?)?\s*$|\s*\bSolutions?\s*:\s*$")
+
+
 def clean(text) -> str:
     """Model output -> text the screen can draw. Idempotent: cleaning clean text changes nothing."""
     text = str(text or "")
     # A character the model wrote as a code (ω for ω) instead of the character itself.
     text = re.sub(r"\\u([0-9a-fA-F]{4})(?![0-9a-fA-F])", lambda m: chr(int(m.group(1), 16)), text)
     text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32 or c in "\x0c\x08\r")  # other control characters
+    text = text.replace("\x00", "")
+    # A printed answer ("Correct Option: A") or an empty "Solution:" heading is not part of the question or an option.
+    text = _ANSWER_LINE.sub("", text).rstrip() if _ANSWER_LINE.search(text) else text
     text = _LEGACY_TABLE.sub(_join_legacy_table, text)
     text = _markers(text)
     text = re.sub(r"<br\s*/?>|</br>", "\n", text, flags=re.I)

@@ -646,3 +646,28 @@ class ReviewDay(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     day: Mapped[str] = mapped_column(String(10), primary_key=True)
     cards: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# PostgreSQL refuses a NUL character anywhere in text or JSON, and one stray NUL from a PDF or a model
+# reply failed a whole paper's save. Every question is scrubbed on its way in, however it was made.
+from sqlalchemy import event
+
+
+def _no_nul(v):
+    if isinstance(v, str):
+        return v.replace("\x00", "")
+    if isinstance(v, list):
+        return [_no_nul(x) for x in v]
+    if isinstance(v, dict):
+        return {_no_nul(k): _no_nul(x) for k, x in v.items()}
+    return v
+
+
+@event.listens_for(Question, "before_insert")
+@event.listens_for(Question, "before_update")
+def _scrub_question(mapper, connection, q):
+    for f in ("number", "section", "text", "options", "answer", "solution", "chapter", "figure_key", "figures"):
+        v = getattr(q, f, None)
+        clean_v = _no_nul(v)
+        if clean_v != v:
+            setattr(q, f, clean_v)
