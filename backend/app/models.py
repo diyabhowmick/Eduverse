@@ -241,7 +241,9 @@ class Question(Base):
     answer_source: Mapped[str] = mapped_column(String(20), default="") # paper | key | ai | human
     confidence: Mapped[str] = mapped_column(String(10), default="")    # high | medium | low, for AI answers
     page: Mapped[int] = mapped_column(Integer, default=0)              # page of the original paper, from 1
-    figure_key: Mapped[str] = mapped_column(String(400), default="")   # picture cropped from the original page
+    figure_key: Mapped[str] = mapped_column(String(400), default="")   # picture cropped from the original page: figure 1
+    figures: Mapped[list] = mapped_column(JSON, default=list)          # storage keys of figures 2, 3, ... ("" where one failed);
+                                                                       # the text says where each is printed with [[fig:N]]
 
 
 class MockAttempt(Base):

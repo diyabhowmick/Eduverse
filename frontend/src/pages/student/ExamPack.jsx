@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, day } from '../../api'
-import { useLoad, Page, useToast, MathText, AuthImg, Icon, plural } from '../../ui'
+import { useLoad, Page, useToast, MathText, AuthImg, Icon, plural, QuestionText } from '../../ui'
 import ExplainPanel from '../../ExplainPanel'
 import Practice from './Practice'
 import Tests from './TestRunner'
@@ -26,10 +26,9 @@ export function QuestionCard({ q, reveal: start = false, pick, picked, result, p
     <div className="card" style={{ marginBottom: 10 }}><div className="card-b">
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
         <b style={{ minWidth: 28 }}>{q.number ? 'Q' + q.number : ''}</b>
-        <div style={{ flex: 1, minWidth: 0 }}><MathText text={q.text} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><QuestionText q={q} maxHeight={280} /></div>
         <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{[q.year && q.year + (q.session ? ' ' + q.session : ''), q.marks ? q.marks + ' marks' : ''].filter(Boolean).join(', ')}</span>
       </div>
-      {q.has_figure && <div style={{ margin: '10px 0 0 38px' }}><AuthImg src={`/api/exams/questions/${q.id}/figure`} alt="Figure for this question" style={{ maxHeight: 280 }} /></div>}
       {q.qtype === 'multi' && pick && <div className="muted" style={{ margin: '8px 0 0 38px', fontSize: 13 }}>More than one option can be correct</div>}
       {numeric && pick && <div style={{ margin: '10px 0 0 38px', maxWidth: 220 }}><input className="input" inputMode="decimal" placeholder="Type your answer" aria-label="Your answer" value={picked || ''} onChange={e => pick(e.target.value)} /></div>}
       {numeric && result && <div className="muted" style={{ margin: '8px 0 0 38px', fontSize: 14 }}>Your answer: {q.given || 'not answered'}</div>}

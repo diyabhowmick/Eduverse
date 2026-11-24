@@ -378,3 +378,5 @@ span.chip{cursor:default}
 .mt-table th{background:var(--panel);font-weight:600}
 .mt-display{display:block;overflow-x:auto;overflow-y:hidden;margin:6px 0;white-space:normal}
 .mt-display .katex-display{margin:0;text-align:left}
+.mt-figure{display:block}.mt-figure img{max-width:100%}
+.mt-display{text-align:center}

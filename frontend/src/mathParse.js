@@ -6,9 +6,16 @@
 const FORMAT = /\\(?:textit|textbf|textrm|textsf|texttt|emph|text|mathrm|mathit|mathbf|underline)\s*\{([^{}]*)\}/g
 
 // Old readings cut a table into one $...$ per line: $\begin{array}{|c|c|}$ / $\text{A} & \text{B} \\$ / ... / $\end{array}$
+// LaTeX's own markers \[ ... \] and \( ... \) become $$ and $, which is all the screen knows. A marker left as its own
+// $\[$ by the old code, or whose partner was lost, is dropped. (\\[4pt] is a row break, not a marker.)
 export function repairLegacy(text) {
-  return String(text ?? '').replace(/(^|[^$])\$\\begin\{(array|tabular)\}([\s\S]*?)\\end\{\2\}\$(?!\$)/g, (all, pre, env, inner) =>
-    inner.includes('$') ? `${pre}$$\\begin{${env}}${inner.replace(/\$/g, '')}\\end{${env}}$$` : all)
+  return String(text ?? '')
+    .replace(/(^|[^$])\$\\begin\{(array|tabular)\}([\s\S]*?)\\end\{\2\}\$(?!\$)/g, (all, pre, env, inner) =>
+      inner.includes('$') ? `${pre}$$\\begin{${env}}${inner.replace(/\$/g, '')}\\end{${env}}$$` : all)
+    .replace(/\$[ \t]*\\[[\]()][ \t]*\$[ \t]*\n?/g, '')
+    .replace(/(?<!\\)\\\[([\s\S]*?)(?:(?<!\\)|(?<=\\\\))\\\]/g, (_, x) => x.includes('$') ? x.trim() : '$$' + x.trim() + '$$')
+    .replace(/(?<!\\)\\\(([\s\S]*?)(?:(?<!\\)|(?<=\\\\))\\\)/g, (_, x) => x.includes('$') ? x : '$' + x.trim() + '$')
+    .replace(/^[ \t]*\\[[\]][ \t]*\n?/gm, '')
 }
 
 // A sentence wrongly put in maths: italic formatting, or several ordinary words. KaTeX would print it with no spaces.
@@ -21,12 +28,22 @@ export function isProse(inner) {
 
 export const plainWords = s => s.replace(FORMAT, '$1').replace(FORMAT, '$1').replace(/\\([%&#_$])/g, '$1').replace(/\\[,;:! ]/g, ' ')
 
-// -> [{kind: 'text' | 'inline' | 'display', value}]
+const FIG = /\[\[fig:(\d+)\]\]/g
+// The figure numbers whose [[fig:N]] mark is in the text, so the rest can be shown after it.
+export const figureMarks = text => new Set([...String(text ?? '').matchAll(FIG)].map(m => +m[1]))
+
+// -> [{kind: 'text' | 'inline' | 'display' | 'figure', value}]; a figure's value is its number
 export function splitMath(text) {
   const src = repairLegacy(text)
   const re = /\$\$([\s\S]+?)\$\$|\$(\\begin\{[\s\S]+?\\end\{[A-Za-z*]+\})\$|\$((?:[^$\\\n]|\\[^\n])+?)\$/g
   const out = []; let last = 0, m
-  const pushText = s => { if (s) out.push({ kind: 'text', value: plainWords(s) }) }
+  const pushText = s => {
+    String(s ?? '').split(/(\[\[fig:\d+\]\])/).forEach(part => {
+      const f = /^\[\[fig:(\d+)\]\]$/.exec(part)
+      if (f) out.push({ kind: 'figure', value: +f[1] })
+      else if (part) out.push({ kind: 'text', value: plainWords(part) })
+    })
+  }
   while ((m = re.exec(src))) {
     pushText(src.slice(last, m.index)); last = re.lastIndex
     if (m[1] != null || m[2] != null) out.push({ kind: 'display', value: (m[1] ?? m[2]).trim() })

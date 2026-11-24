@@ -48,7 +48,8 @@ def keep_option_figures(old, new) -> list[dict]:
 def q_out(q: Question, answers=True):
     d = {"id": q.id, "number": q.number, "section": q.section, "text": q.text, "options": public_options(q.options), "marks": q.marks,
          "chapter": q.chapter, "chapter_ref": q.chapter_ref or {}, "paper_id": q.paper_id, "qtype": q.qtype or ("mcq" if q.options else "written"),
-         "page": q.page or 0, "has_figure": bool(q.figure_key)}
+         "page": q.page or 0, "has_figure": bool(q.figure_key),
+         "more_figures": [n for n, k in enumerate(q.figures or [], 2) if k]}  # figures 2, 3, ... that exist
     if answers:
         d.update(answer=q.answer, solution=q.solution, answer_source=q.answer_source or "", confidence=q.confidence or "")
     return d
@@ -323,6 +324,7 @@ class FigureIn(BaseModel):
     page: int = 0
     box: list[float] | None = None  # fractions of the page; none removes the figure
     option: str = ""                # an option key: the picture is that option's, not the question's
+    figure: int = 1                 # which of the question's figures: 1 is the first, a number one past the last adds one
 
 
 @router.post("/questions/{qid}/figure")
@@ -336,6 +338,8 @@ def set_figure(qid: int, body: FigureIn, db: Session = Depends(get_db), me=Depen
     _editable(db, p, me)
     if body.option:
         return set_option_figure(db, q, p, body, me)
+    if body.figure > 1:
+        return set_more_figure(db, q, p, body, me)
     if body.box is None:
         q.figure_key = ""
     else:
@@ -352,6 +356,46 @@ def set_figure(qid: int, body: FigureIn, db: Session = Depends(get_db), me=Depen
             q.figure_key = f"papers/{p.book_id}/figures/{p.id}_{q.id}.png"
             store.put(q.figure_key, pg.get_pixmap(dpi=200, clip=clip).tobytes("png"))
     log(db, me, "paper.question_edit", "question", qid, fields=["figure"])
+    db.commit()
+    return q_out(q)
+
+
+def _cut(p: QuestionPaper, page: int, box: list[float], key: str):
+    """Cuts box out of a page of the original PDF and stores it at key."""
+    import pymupdf
+    if len(box) != 4 or not (p.source_key or "").lower().endswith(".pdf"):
+        raise HTTPException(422, "Draw the picture on a page of the original PDF")
+    store = get_storage()
+    with pymupdf.open(stream=store.get(p.source_key), filetype="pdf") as doc:
+        if not 1 <= page <= len(doc):
+            raise HTTPException(422, "No such page")
+        pg = doc[page - 1]; r = pg.rect
+        clip = pymupdf.Rect(box[0] * r.width, box[1] * r.height, box[2] * r.width, box[3] * r.height) & r
+        if clip.is_empty or clip.width < 8 or clip.height < 8:
+            raise HTTPException(422, "That area is too small")
+        store.put(key, pg.get_pixmap(dpi=200, clip=clip).tobytes("png"))
+
+
+def set_more_figure(db, q: Question, p: QuestionPaper, body: FigureIn, me):
+    """Figure 2, 3, ... of a question: redrawn, removed, or one more added at the end."""
+    more = list(q.figures or [])
+    i = body.figure - 2
+    if i > len(more):
+        raise HTTPException(422, f"Add figure {len(more) + 2} first")
+    if i == len(more):
+        if body.box is None:
+            raise HTTPException(422, "There is no figure to remove")
+        more.append("")
+    if body.box is None:
+        more[i] = ""
+        while more and not more[-1]:
+            more.pop()  # a removed last figure leaves no gap behind it
+    else:
+        key = f"papers/{p.book_id}/figures/{p.id}_{q.id}_f{body.figure}.png"
+        _cut(p, body.page, body.box, key)
+        more[i] = key
+    q.figures = more  # a new list, so the JSON column is saved
+    log(db, me, "paper.question_edit", "question", q.id, fields=["figure"], figure=body.figure)
     db.commit()
     return q_out(q)
 
@@ -402,6 +446,19 @@ def question_figure(qid: int, db: Session = Depends(get_db), me=Depends(require(
         raise HTTPException(404, "No figure")
     _figure_access(db, me, q)
     return Response(get_storage().get(q.figure_key), media_type="image/png")
+
+
+@router.get("/questions/{qid}/figures/{n}")
+def more_figure(qid: int, n: int, db: Session = Depends(get_db), me=Depends(require("super_admin", "reviewer", "student"))):
+    """Figure n of a question, where [[fig:n]] sits in its text. Figure 1 is the same as /figure."""
+    q = db.get(Question, qid)
+    if not q:
+        raise HTTPException(404, "No figure")
+    key = q.figure_key if n == 1 else ((q.figures or [])[n - 2] if 2 <= n < len(q.figures or []) + 2 else "")
+    if not key:
+        raise HTTPException(404, "No figure")
+    _figure_access(db, me, q)
+    return Response(get_storage().get(key), media_type="image/png")
 
 
 @router.get("/questions/{qid}/options/{key}/figure")

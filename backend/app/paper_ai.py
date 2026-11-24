@@ -8,32 +8,36 @@ from .db import SessionLocal
 from .models import Book, Question, QuestionPaper, Setting
 from .defaults import AI
 from .llm_client import openai_json
-from .qtext import clean, drop_echoed_options, question_number, strip_option_mark, similar
+from .qtext import clean, drop_echoed_options, question_number, strip_option_mark, similar, fig_markers, UNDRAWABLE
 from .storage import get_storage
 
 READ_PROMPT = """This is page {page} of {pages} of an exam question paper{exam}. Image 1 is the whole page. Images 2 and 3 are zoomed views of its left and right
-halves: read the words and maths from those, and use image 1 for the layout and for figure_box. On a two column page read the left column top to bottom, then the right.
+halves: read the words and maths from those, and use image 1 for the layout and for figure boxes. On a two column page read the left column top to bottom, then the right.
 Copy {which} exactly, ignoring logos, headers and footers.
 The section heading in force at the end of the previous page was: {section}. A heading applies only to questions printed after it, so questions above the first heading on this page belong to that section.
 Return JSON: {{"questions": [{{
  "number": "the question number exactly as printed, digits only: 7, not Q7 or 7.",
  "section": "the full heading in force for this question, e.g. Mathematics Section B",
- "text": "the question only, never its options, which go in options. Write any table out as described below. Write all maths as LaTeX between $ signs, e.g. $x^2+1$. Do not solve or change anything",
+ "text": "the question only, never its options, which go in options. Write any table out as described below, and put [[fig:1]], [[fig:2]] where each figure is printed. Write all maths as LaTeX between $ signs, e.g. $x^2+1$. Do not solve or change anything",
  "options": [{{"key": "a", "text": "the option's text only, without its (a) or a. mark, maths in $ signs", "figure_box": null}}],
  "type": "mcq, multi (more than one correct), numeric (no options, the answer is a typed number) or written",
  "answer": "only if the answer is printed on this page, else empty",
  "marks": 0,
- "figure_box": [0, 0, 1, 1],
+ "figures": [[0, 0, 1, 1]],
  "continued": false
 }}]}}
 Option keys are lower case a, b, c, d in printed order, even if the paper prints (1) (2) (3) (4) or (A) (B). Options often sit several on one line, or follow statements such as A. B. C. D. inside the question: always capture all of them.
 Do not repeat the options inside text. Statements labelled A. B. C. D. or (i) (ii) that the options refer to belong in text; the answer choices themselves do not.
 Words stay plain words: never use \\textit, \\textbf, \\emph or any other LaTeX outside $ signs, and never put a sentence inside $ signs. Write italic names such as Selaginella as ordinary words. Keep the spaces between words.
-figure_box is the diagram that belongs to the question, as fractions of image 1 from 0 to 1, or null if there is none. Make it include the whole diagram with all its labels, arrows and axis values, and nothing else. A table is not a diagram: write it out in text, with null here.
+Maths exactly as printed: a fraction stays a fraction ($\\frac{{31}}{{11x}}$), a limit keeps its subscript ($\\lim_{{t \\to x}}$), and every power, subscript, sign, bracket and set symbol is kept ($x^{{10}}$, $\\mathbb{{R}}^2$, $(0, \\infty)$). Never simplify, reorder or rewrite. Always pair \\left with \\right.
+Keep the paper's layout: each statement, list entry and option on its own line; a system of equations as $$\\begin{{aligned}} ax + by &= 1 \\\\ bx + cy &= -1 \\end{{aligned}}$$ with one equation per line; a long displayed formula on its own line inside $$ signs.
+Chemical formulas and ions in maths: $\\mathrm{{H_2SO_4}}$, $\\mathrm{{SO_4^{{2-}}}}$, $\\mathrm{{H_3O^+}}$.
+figures holds every part of the question that cannot be written faithfully as text or LaTeX, as boxes [x0, y0, x1, y1] in fractions of image 1 from 0 to 1, in printed order, or [] if there is none. These are always figures: diagrams, graphs, circuits, apparatus, chemical structures, reaction schemes drawn with structures (take the whole scheme with the reagents over and under its arrows), and a List-I / List-II in which any entry is a structure or a graph (take both lists as one figure). Never write a structure in code such as \\chemfig, and never write that part in text as well.
+Put [[fig:1]], [[fig:2]] on its own line in text at exactly the place each figure is printed, so the question reads in the same order as the paper. Each box includes the whole figure with all its labels, arrows and axis values, and nothing else. A table of words or numbers is not a figure: write it out in text.
 Write a table (for example Match List-I with List-II) on its own lines inside $$ signs as a LaTeX array with ruled borders, one printed row per line:
 $$\\begin{{array}}{{|l|l|l|l|}} \\hline \\text{{List-I}} & & \\text{{List-II}} & \\\\ \\hline \\text{{A.}} & \\text{{Lenticels}} & \\text{{(i)}} & \\text{{Phellogen}} \\\\ \\hline \\end{{array}}$$
 Put words in a cell inside \\text{{}} and maths in a cell without $ signs. Keep every row and column, in printed order, and the sentence after the table as ordinary text.
-If the options are pictures (graphs, circuits, structures), give each option its own figure_box around just its picture, and set its text to any words printed with that picture, or "" if there are none. The question's figure_box then covers only the question's own diagram, or is null.
+If the options are pictures (graphs, circuits, structures), give each option its own figure_box around just its picture, and set its text to any words printed with that picture, or "" if there are none. The question's figures then cover only the question's own figures.
 Keep questions in printed order. Numbering may start again at 1 in a new section or subject: keep the printed number, never renumber.
 continued is true only when the question began on the previous page. Never invent a question.
 The page edge may cut off the end of a line. Never guess a number, sign, symbol or formula: where any is cut off or cannot be read, write [unclear] at that spot. Only finish a plain English word when it is certain."""
@@ -337,19 +341,38 @@ def place(rows, run: int, n: int, d: dict, box):
     rows.insert(at, (d, box))
 
 
+def figure_boxes(q: dict, page: int) -> list[tuple]:
+    """The question's figures as (page, box), in printed order. An older reply gives one figure_box instead."""
+    raw = q.get("figures")
+    if not isinstance(raw, list) or (len(raw) == 4 and all(isinstance(v, (int, float)) for v in raw)):
+        raw = [raw] if isinstance(raw, list) and raw else []
+    if not raw and isinstance(q.get("figure_box"), list):
+        raw = [q["figure_box"]]
+    return [(page, b) for b in raw if isinstance(b, list) and len(b) == 4]
+
+
+def with_figures(d: dict, q: dict, page: int, offset: int = 0) -> list[tuple]:
+    """Matches the [[fig:N]] marks in the text to the figures the page really has, and returns those figures."""
+    boxes = figure_boxes(q, page)
+    d["text"] = fig_markers(d["text"], len(boxes), offset)
+    return boxes
+
+
 def add_rows(rows, found, i, section):
     for q in found:
         if q.get("continued") and rows:
-            last = rows[-1][0]
+            last, have = rows[-1]
             more = norm_question(q, 0, i)
+            boxes = with_figures(more, q, i, offset=len(have or []))  # its figures number on from the first page's
             last["options"] += [o for o in more["options"] if o["key"] not in {x["key"] for x in last["options"]}]
             last["text"] = drop_echoed_options((last["text"] + "\n" + more["text"]).strip(), last["options"])
+            rows[-1] = (last, (have or []) + boxes)
             continue
         if str(q.get("text") or "").strip() or q.get("options"):
             d = norm_question(q, len(rows), i)
             d["section"] = d["section"] or section
             section = d["section"]
-            rows.append((d, q.get("figure_box")))
+            rows.append((d, with_figures(d, q, i)))
     return section
 
 
@@ -391,7 +414,7 @@ def read(paper_id: int):
                         q["continued"] = False
                         d = norm_question(q, 0, pg)
                         d["section"] = d["section"] or w["section"] or prior
-                        place(rows, w["run"], w["n"], d, q.get("figure_box"))
+                        place(rows, w["run"], w["n"], d, with_figures(d, q, pg))
                 merge_duplicates(rows)
             # Printed order, never sorted by number: sorting mixed up papers whose sections each start again at 1.
             for pos, (d, _) in enumerate(rows):
@@ -403,14 +426,25 @@ def read(paper_id: int):
                 db.delete(q)
             db.flush()
             images, drawn = embedded_images(doc), {}
-            for data, box in rows:
+            undrawable = []
+            for data, figs in rows:
                 boxes = {o["key"]: o.pop("_box") for o in data["options"] if "_box" in o}
                 q = Question(paper_id=paper_id, **data); db.add(q); db.flush()
-                if isinstance(box, list) and len(box) == 4:
-                    png = crop(doc, data["page"], box, images, drawn)
+                # Figure 1 is figure_key, as before; figures 2, 3, ... go in q.figures. A figure that cannot be cut out
+                # keeps its place as "", so [[fig:N]] in the text still points at the right one.
+                extra = []
+                for n, (pg_no, box) in enumerate(figs or [], 1):
+                    png = crop(doc, pg_no, box, images, drawn)
+                    key_n = f"papers/{p.book_id}/figures/{paper_id}_{q.id}.png" if n == 1 else f"papers/{p.book_id}/figures/{paper_id}_{q.id}_f{n}.png"
                     if png:
-                        q.figure_key = f"papers/{p.book_id}/figures/{paper_id}_{q.id}.png"
-                        store.put(q.figure_key, png)
+                        store.put(key_n, png)
+                    if n == 1:
+                        q.figure_key = key_n if png else ""
+                    else:
+                        extra.append(key_n if png else "")
+                q.figures = extra
+                if UNDRAWABLE.search(q.text + " ".join(o.get("text", "") for o in data["options"])):
+                    undrawable.append(q.number or str(len(undrawable) + 1))
                 if boxes:
                     opts = []
                     for o in data["options"]:
@@ -431,6 +465,9 @@ def read(paper_id: int):
         for sec, a, b in jumps:
             warn.append(f"Numbering jumps from {a} to {b}{' in ' + sec if sec else ''}. One of these numbers may be misread; check it against the original.")
         warn += twice
+        if undrawable:
+            warn.append("Question " + ", ".join(undrawable) + " has a chemical structure or drawing written as code, which cannot be shown. "
+                        "Use Redo figure to cut it from the original page, then delete that code from the question text.")
         progress(db, p, ai_status="done", ai_stage="Read", ai_done=total, ai_total=total, ai_error=" ".join(warn))
     except Exception as e:
         db.rollback(); p = db.get(QuestionPaper, paper_id)
@@ -439,12 +476,14 @@ def read(paper_id: int):
         db.close()
 
 
-def ask_answer(q, exam, model, base_url, key, figure, option_figures=None):
+def ask_answer(q, exam, model, base_url, key, figure, option_figures=None, extra_figures=()):
     """One model request. Runs on a worker thread, so it touches no database objects.
-    figure is the question's picture; option_figures maps an option key to that option's picture."""
-    images, n = [], 0
-    if figure:
-        images.append(data_url(figure)); n = 1
+    figure is the question's figure 1, extra_figures its figures 2, 3, ...; option_figures maps an option key to its picture."""
+    images, n, named = [], 0, []
+    for k, pic in enumerate([figure, *extra_figures], 1):
+        if pic:
+            images.append(data_url(pic)); n += 1
+            named.append(f"[[fig:{k}]] is image {n}")
     lines = []
     for o in q["options"]:
         pic = (option_figures or {}).get(o["key"])
@@ -452,7 +491,7 @@ def ask_answer(q, exam, model, base_url, key, figure, option_figures=None):
             images.append(data_url(pic)); n += 1
         lines.append(f"({o['key']}) {o['text']}" + (f" [the picture in image {n}]" if pic else ""))
     opts = "Options:\n" + "\n".join(lines) if lines else ""
-    text = q["text"] + ("\n(The question's figure is image 1.)" if figure and option_figures else "")
+    text = q["text"] + (f"\n(The figures: {'; '.join(named)}.)" if named else "")
     fmt = {"mcq": "the single option letter", "multi": "the correct option letters separated by commas",
            "numeric": "the final number only"}.get(q["qtype"], "a short final answer")
     usage = {}
@@ -475,7 +514,8 @@ def answers(paper_id: int):
         with ThreadPoolExecutor(max_workers=6) as pool:
             jobs = {pool.submit(ask_answer, {"options": q.options or [], "qtype": q.qtype, "section": q.section, "text": q.text}, exam, model, base_url, key,
                                 store.get(q.figure_key) if q.figure_key else None,
-                                {o["key"]: store.get(o["figure"]) for o in q.options or [] if o.get("figure")}): q for q in todo}
+                                {o["key"]: store.get(o["figure"]) for o in q.options or [] if o.get("figure")},
+                                [store.get(k) if k else None for k in q.figures or []]): q for q in todo}
             for job in as_completed(jobs):
                 q = jobs[job]
                 try:

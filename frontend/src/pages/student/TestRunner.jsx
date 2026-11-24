@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { api, day } from '../../api'
-import { useLoad, MathText, AuthImg, Icon, Sheet, Ring, useToast, plural } from '../../ui'
+import { useLoad, MathText, AuthImg, Icon, Sheet, Ring, useToast, plural, QuestionText } from '../../ui'
 import { Options, TYPE } from './Practice'
 import { QuestionCard } from './ExamPack'
 
@@ -129,8 +129,7 @@ function Runner({ test, onDone, onExit }) {
       <div className="qhead"><span className="n">Question {t.idx + 1}</span><span className="t">{TYPE[q.qtype] || 'Question'}</span>
         {t.correct > 0 && <span className="t">+{t.correct}{t.wrong ? ` / −${t.wrong}` : ''}</span>}
         {t.marked.includes(q.id) && <span className="tag" style={{ background: '#EEE7FB', color: '#6B46C1' }}>Marked for review</span>}</div>
-      <div className="qtext"><MathText text={q.text} /></div>
-      {q.has_figure && <div style={{ margin: '12px 0' }}><AuthImg src={`/api/exams/questions/${q.id}/figure`} alt="Figure for this question" style={{ maxHeight: 320 }} /></div>}
+      <div className="qtext"><QuestionText q={q} maxHeight={320} /></div>
       <Options q={q} value={t.answers[q.id]} onChange={answer} />
       {!q.options?.length && q.qtype !== 'numeric' && <div className="note">Written question: work it out on paper. It is not marked automatically; the solution is shown after you submit.</div>}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

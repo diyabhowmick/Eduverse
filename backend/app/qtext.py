@@ -14,7 +14,9 @@ from difflib import SequenceMatcher
 _LOST = [("\x0c", "\\f"), ("\x08", "\\b")]
 _CR_CMD = re.compile(r"\r(?=(?:ho|ight|ightarrow|angle|m|ceil|floor|Rightarrow)(?![a-z]))")
 _TAB_CMD = re.compile(r"\t(?=(?:ext|extbf|extit|extrm|imes|heta|au|an|ilde|o|op|riangle|hinspace)(?![a-z]))")
-_NL_CMD = re.compile(r"\n(?=(?:eq|abla|u|ot|e|eg|i|leq|geq|parallel|mid)(?![a-z]))")
+# Only commands no line of ordinary text starts with. A real line break before "i) Hg2+" must stay a line break,
+# never become \ni (drawn as ∋); \nu counts only when maths follows it at once (\nu_0, \nu^2, \nu}).
+_NL_CMD = re.compile(r"\n(?=(?:eq|abla|leq|geq|parallel|mid|exists|subseteq|supseteq|ewarrow|earrow)(?![a-z])|u(?=[_^{}$]))")
 
 # A whole table: \begin{array}...\end{array} and friends, possibly over several lines.
 _ENV = re.compile(r"\\begin\{(array|tabular|matrix|pmatrix|bmatrix|vmatrix|cases|aligned|align\*?)\}[\s\S]*?\\end\{\1\}")
@@ -83,8 +85,20 @@ def _strong(tok: str) -> bool:
 
 
 def _joiner(tok: str) -> bool:
-    """A chunk that may sit inside a formula between two maths chunks: a number, an operator, one letter."""
-    return bool(re.fullmatch(r"[=+\-*/<>(),.\[\]|:]+|\d+(?:\.\d+)?|[A-Za-z]|\\[A-Za-z]+", tok))
+    """A chunk that may sit inside a formula between two maths chunks: a number, an operator, one letter, each possibly
+    followed by a comma, as in (2, \\frac{7}{2}, 6)."""
+    return bool(re.fullmatch(r"(?:[=+\-*/<>(),.\[\]|:]+|[(\[]?-?\d+(?:\.\d+)?|[(\[]?[A-Za-z]|\\[A-Za-z]+)[,;)\]]*", tok))
+
+
+_LEAD = re.compile(r"[=+\-*/<>(\[|:]+|-?\d+(?:\.\d+)?|[A-Za-z]")
+_RELATION = re.compile(r"(?:^|[^A-Za-z])(?:[=<>+\-]|\\(?:in|notin|ni|subset|subseteq|supset|supseteq|le|leq|ge|geq|ne|neq|approx|equiv|sim|simeq|"
+                       r"propto|to|rightarrow|Rightarrow|leftarrow|cdot|times|div|pm|mp|cup|cap|setminus|mid|parallel|perp))$")
+
+
+def _unbalanced(formula: str) -> bool:
+    """\\left without its \\right, or an open brace: cutting the formula here would leave something KaTeX cannot draw."""
+    return len(re.findall(r"\\left(?![a-z])", formula)) > len(re.findall(r"\\right(?![a-z])", formula)) \
+        or formula.count("{") > formula.count("}")
 
 
 def _chunks(line: str) -> list[str]:
@@ -116,7 +130,8 @@ def _wrap_bare_maths(line: str) -> str:
         if not strong[i]:
             out.append(toks[i]); i += 1; continue
         a = i
-        while a > 0 and join[a - 1] and len(out) and out[-1] == toks[a - 1]:
+        # Backwards only over plain operands and operators ("x =" before \frac), never a list mark such as "i)".
+        while a > 0 and _LEAD.fullmatch(toks[a - 1] or "") and toks[a - 1] not in ("a", "I") and len(out) and out[-1] == toks[a - 1]:
             a -= 1; out.pop()
         b, j = i, i + 1
         while j < n:
@@ -129,12 +144,15 @@ def _wrap_bare_maths(line: str) -> str:
                 if k < n and strong[k]:
                     b, j = k, k + 1
                 else:
-                    # trailing "= 5" after a formula still belongs to it
-                    if re.fullmatch(r"[=<>]", toks[j]) and k > j + 1:
-                        b = k - 1
                     break
             else:
                 break
+        # A formula ending in a relation or operator takes its right-hand side: "\in S", "= 5", "+ c".
+        while b + 1 < n and _RELATION.search(toks[b]) and toks[b + 1] and join[b + 1]:
+            b += 1
+        # Never stop inside \left ... \right: take words up to the matching \right.
+        while _unbalanced(" ".join(toks[a:b + 1])) and b + 1 < n:
+            b += 1
         formula = " ".join(toks[a:b + 1])
         tail = re.search(r"[.,;:?!]+$", formula)
         tail = tail.group() if tail else ""
@@ -192,10 +210,27 @@ def _join_legacy_table(m):
     return f"{pre}$$\\begin{{{env}}}{inner.replace('$', '')}\\end{{{env}}}$$"
 
 
+# LaTeX's own display and inline markers, \[ ... \] and \( ... \). The screen only knows $$ and $. A row break with
+# spacing, \\[4pt], is not a marker: the [ follows two backslashes.
+_LONE_MARK = re.compile(r"\$[ \t]*\\[\[\]()][ \t]*\$[ \t]*\n?")                # $\[$ left by the old per-line code
+_DISPLAY_MARK = re.compile(r"(?<!\\)\\\[([\s\S]*?)(?:(?<!\\)|(?<=\\\\))\\\]")
+_INLINE_MARK = re.compile(r"(?<!\\)\\\(([\s\S]*?)(?:(?<!\\)|(?<=\\\\))\\\)")
+_STRAY_MARK = re.compile(r"(?m)^[ \t]*\\[\[\]][ \t]*\n?")                    # a marker whose partner was lost
+
+
+def _markers(text: str) -> str:
+    text = _LONE_MARK.sub("", text)
+    # Already inside $ signs (a table the code wrapped earlier): only the markers go.
+    text = _DISPLAY_MARK.sub(lambda m: m.group(1).strip() if "$" in m.group(1) else "$$" + m.group(1).strip() + "$$", text)
+    text = _INLINE_MARK.sub(lambda m: m.group(1) if "$" in m.group(1) else "$" + m.group(1).strip() + "$", text)
+    return _STRAY_MARK.sub("", text)
+
+
 def clean(text) -> str:
     """Model output -> text the screen can draw. Idempotent: cleaning clean text changes nothing."""
     text = str(text or "")
     text = _LEGACY_TABLE.sub(_join_legacy_table, text)
+    text = _markers(text)
     text = re.sub(r"<br\s*/?>|</br>", "\n", text, flags=re.I)
     text = _restore_escapes(text).replace("\\newline", "\n")
     text = _markdown_tables(text)  # before the $ split, so a cell holding $maths$ does not break the table apart
@@ -260,6 +295,25 @@ def similar(a: str, b: str) -> bool:
         return True  # an empty half is a fragment of the other
     short, long_ = sorted((a, b), key=len)
     return short in long_ or SequenceMatcher(None, a, b).ratio() >= .6
+
+
+# ---------------- figure markers ----------------
+_FIG_ANY = re.compile(r"\[\[\s*fig(?:ure)?\s*[:#]?\s*(\d+)\s*\]\]|\[\s*fig(?:ure)?\s*[:#]?\s*(\d+)\s*\]", re.I)
+
+
+def fig_markers(text: str, count: int | None = None, offset: int = 0) -> str:
+    """[[figure 1]], [fig:1] -> [[fig:1]], each on its own line. offset renumbers (a question carried over a page break
+    numbers its figures on from the first page's); a marker for a figure that does not exist (beyond count) goes."""
+    def one(m):
+        n = int(m.group(1) or m.group(2)) + offset
+        return f"\n[[fig:{n}]]\n" if count is None or 1 <= n <= count + offset else "\n"
+    text = _FIG_ANY.sub(one, text)
+    text = re.sub(r"\s*\n\s*(\[\[fig:\d+\]\])\s*\n\s*", r"\n\1\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+# Code a screen cannot draw: a structure or picture written as LaTeX packages KaTeX does not have.
+UNDRAWABLE = re.compile(r"\\(?:chemfig|schemestart|setatomsep|includegraphics|tikz|begin\{tikzpicture\}|ch\{|lewis)")
 
 
 # ---------------- question numbers ----------------

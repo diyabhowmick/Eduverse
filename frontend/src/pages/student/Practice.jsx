@@ -1,7 +1,7 @@
 import { NotSure } from './common'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
-import { useLoad, MathText, AuthImg, Icon, useToast } from '../../ui'
+import { useLoad, MathText, AuthImg, Icon, useToast, QuestionText } from '../../ui'
 import ExplainPanel from '../../ExplainPanel'
 
 const SHOW = [['all', 'All'], ['new', 'Not tried'], ['wrong', 'Mistakes'], ['saved', 'Saved']]
@@ -79,8 +79,7 @@ export default function Practice({ id, styles, initial = {} }) {
         <span className="t">{TYPE[q.qtype] || 'Question'}</span><span className="t">{q.year}{q.session ? ' · ' + q.session : ''}</span>
         {q.state.status && <span className={'tag ' + (q.state.status === 'correct' ? 'ok' : 'bad')}>{q.state.status === 'correct' ? 'You got this right before' : 'You got this wrong before'}</span>}
         <button type="button" className={'btn ghost sm star' + (q.state.bookmarked ? ' on' : '')} style={{ marginLeft: 'auto' }} onClick={star} aria-pressed={q.state.bookmarked} aria-label="Save for revision"><Icon n="star" s={18} />{q.state.bookmarked ? 'Saved' : 'Save'}</button></div>
-      <div className="qtext"><MathText text={q.text} /></div>
-      {q.has_figure && <div style={{ margin: '12px 0' }}><AuthImg src={`/api/exams/questions/${q.id}/figure`} alt="Figure for this question" style={{ maxHeight: 300 }} /></div>}
+      <div className="qtext"><QuestionText q={q} maxHeight={300} /></div>
       <Options q={{ ...q, answer: res?.answer ?? q.answer }} value={given} onChange={setGiven} result={!!res} disabled={!!res} />
       {res && res.correct !== null && <div className={'verdict ' + (res.correct ? 'ok' : 'bad')}><Icon n={res.correct ? 'check' : 'x'} />{res.correct ? 'Correct' : 'Not quite. The right answer is marked in green.'}</div>}
       {res && (res.solution || res.answer) && <div className="solution">{!q.options?.length && q.qtype !== 'numeric' && res.answer && <div><b>Answer:</b> <MathText text={res.answer} /></div>}

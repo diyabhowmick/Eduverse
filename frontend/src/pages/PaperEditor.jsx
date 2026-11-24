@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { useLoad, Tag, useToast, Modal, Field, MathText, AuthImg, ask } from '../ui'
+import { useLoad, Tag, useToast, Modal, Field, MathText, AuthImg, ask, QuestionText, mathError } from '../ui'
 
 const SOURCE = { paper: ['Printed on the paper', 'ok'], key: ['From the answer key', 'ok'], human: ['Set by a person', 'ok'], ai: ['AI answer', 'info'] }
 const TYPES = [['mcq', 'One correct option'], ['multi', 'More than one correct'], ['numeric', 'Typed number'], ['written', 'Written']]
@@ -54,8 +54,8 @@ function QEdit({ q, chapters, onSave, onDelete, locked, onPage, onCrop, onNoFigu
   const src = SOURCE[q.answer_source]
   if (!open) return <div className={'card' + (q.confidence === 'low' ? ' flagged' : '')} style={{ marginBottom: 8 }}><div className="card-b" style={{ display: 'flex', gap: 10 }}>
     <b style={{ minWidth: 34 }}>{q.number ? 'Q' + q.number : 'Q'}</b>
-    <div style={{ flex: 1, minWidth: 0 }}><div>{q.text ? <MathText text={q.text} /> : <span className="muted">No question text</span>}</div>
-      {q.has_figure && <AuthImg stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/figure`} style={{ margin: '8px 0', maxHeight: 220 }} />}
+    <div style={{ flex: 1, minWidth: 0 }}><div>{q.text || q.has_figure ? <QuestionText q={q} stamp={q.figure_stamp} maxHeight={260} /> : <span className="muted">No question text</span>}</div>
+      {mathError(q.text, ...(q.options || []).map(o => o.text)) && <div className="tag bad" style={{ margin: '6px 0' }}>A formula here cannot be drawn. Compare with the original and fix it, or cut that part as a figure.</div>}
       {q.options?.length > 0 && <div style={{ fontSize: 13, display: 'grid', gap: 2, marginTop: 4 }}>{q.options.map(o => <div key={o.key}>({o.key}) <MathText text={o.text} />
         {o.has_figure && <AuthImg stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Picture for option ' + o.key} style={{ display: 'block', margin: '4px 0 6px 22px', maxHeight: 140 }} />}</div>)}</div>}
       <div style={{ fontSize: 13, marginTop: 6 }}>{q.answer ? <span>Answer: <b><MathText text={q.answer} /></b></span> : <span className="tag warn">No answer</span>}
@@ -90,7 +90,10 @@ function QEdit({ q, chapters, onSave, onDelete, locked, onPage, onCrop, onNoFigu
 export default function PaperEditor({ pid, role, onBack }) {
   const { data: p, reload } = useLoad('/api/exams/papers/' + pid, [pid]); const toast = useToast()
   const [back, setBack] = useState(false); const [note, setNote] = useState(''); const [page, setPage] = useState(0); const [crop, setCrop] = useState(null); const [stamp, setStamp] = useState(0); const [exq, setExq] = useState(null)
-  const [cropFor, setCropFor] = useState('') // '' is the question's own figure, a letter is that option's picture
+  const [cropFor, setCropFor] = useState('') // '' is figure 1, 'f2' figure 2 and so on, a letter is that option's picture
+  const cropBody = () => /^f\d+$/.test(cropFor) ? { figure: +cropFor.slice(1) } : cropFor ? { option: cropFor } : {}
+  const cropHas = () => { const f = /^f(\d+)$/.exec(cropFor); return f ? crop.more_figures?.includes(+f[1]) : cropFor ? crop.options?.find(o => o.key === cropFor)?.has_figure : false }
+  const nextFig = q => Math.max(1, ...(q.more_figures || [])) + 1
   const working = ['queued', 'running'].includes(p?.ai?.status)
   useEffect(() => { if (!working) return; const t = setInterval(reload, 3000); return () => clearInterval(t) }, [working, reload])
   const call = async (fn, msg) => { try { const r = await fn(); msg && toast(msg); await reload(); return r || true } catch (e) { toast(e.message, true); return false } }
@@ -136,11 +139,15 @@ export default function PaperEditor({ pid, role, onBack }) {
         <button className="btn ghost sm" onClick={() => setPage(page + 1)}>Next</button></div>
         {crop && <div className="note" style={{ margin: '0 10px 8px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           Drag around the picture for <b>Q{crop.number}</b>
-          {crop.options?.length > 0 && <select className="input" style={{ width: 'auto', padding: '2px 6px' }} aria-label="Picture for" value={cropFor} onChange={e => setCropFor(e.target.value)}>
-            <option value="">the question</option>{crop.options.map(o => <option key={o.key} value={o.key}>option ({o.key}){o.has_figure ? ', replace' : ''}</option>)}</select>}
-          {cropFor && crop.options?.find(o => o.key === cropFor)?.has_figure && <button className="btn ghost sm" onClick={async () => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { box: null, option: cropFor } }), 'Picture removed')) { setCrop(null); setStamp(s => s + 1) } }}>Remove this picture</button>}
-          <button className="btn ghost sm" onClick={() => setCrop(null)}>Cancel</button></div>}
-        {crop ? <CropPage src={`/api/exams/papers/${pid}/pages/${page}`} page={page} onBox={async (pg, box) => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { page: pg, box, option: cropFor } }), cropFor ? `Picture saved for option (${cropFor})` : 'Figure saved')) { setCrop(null); setStamp(s => s + 1) } }} />
+          <select className="input" style={{ width: 'auto', padding: '2px 6px' }} aria-label="Picture for" value={cropFor} onChange={e => setCropFor(e.target.value)}>
+            <option value="">figure 1{crop.has_figure ? ', replace' : ''}</option>
+            {(crop.more_figures || []).map(n => <option key={n} value={'f' + n}>figure {n}, replace</option>)}
+            <option value={'f' + nextFig(crop)}>a new figure {nextFig(crop)}</option>
+            {(crop.options || []).map(o => <option key={o.key} value={o.key}>option ({o.key}){o.has_figure ? ', replace' : ''}</option>)}</select>
+          {cropFor && cropHas() && <button className="btn ghost sm" onClick={async () => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { box: null, ...cropBody() } }), 'Picture removed')) { setCrop(null); setStamp(s => s + 1) } }}>Remove this picture</button>}
+          <button className="btn ghost sm" onClick={() => setCrop(null)}>Cancel</button>
+          {/^f\d+$/.test(cropFor) && <span className="muted" style={{ fontSize: 12, flexBasis: '100%' }}>To show it at the right place, put [[fig:{cropFor.slice(1)}]] on its own line in the question text with Edit. Without it, the figure shows after the text.</span>}</div>}
+        {crop ? <CropPage src={`/api/exams/papers/${pid}/pages/${page}`} page={page} onBox={async (pg, box) => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { page: pg, box, ...cropBody() } }), /^f/.test(cropFor) ? `Figure ${cropFor.slice(1)} saved` : cropFor ? `Picture saved for option (${cropFor})` : 'Figure saved')) { setCrop(null); setStamp(s => s + 1) } }} />
           : <AuthImg src={`/api/exams/papers/${pid}/pages/${page}`} alt={'Page ' + page + ' of the original paper'} />}</aside>}
     </div>
     {exq && <Explanations q={exq} onClose={() => setExq(null)} />}
