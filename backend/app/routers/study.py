@@ -364,7 +364,7 @@ def quickfix(book_id: int, topic: str, db: Session = Depends(get_db), me=Depends
     src, qs = S.quickfix_questions(db, me.id, book_id, topic)
     if not qs:
         raise HTTPException(404, "No questions on this topic yet")
-    return {"qsource": src, "topic": topic, "questions": [{"id": q.id, "text": q.text, "options": q.options or [],
+    return {"qsource": src, "topic": topic, "questions": [{"id": q.id, "text": q.text, "options": [{k: v for k, v in o.items() if k != "figure" or src == "chapter"} for o in q.options or []],
             "figure": (q.figure or {}) if src == "chapter" else {}, "qtype": q.qtype} for q in qs]}
 
 

@@ -56,7 +56,8 @@ function QEdit({ q, chapters, onSave, onDelete, locked, onPage, onCrop, onNoFigu
     <b style={{ minWidth: 34 }}>{q.number ? 'Q' + q.number : 'Q'}</b>
     <div style={{ flex: 1, minWidth: 0 }}><div>{q.text ? <MathText text={q.text} /> : <span className="muted">No question text</span>}</div>
       {q.has_figure && <AuthImg stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/figure`} style={{ margin: '8px 0', maxHeight: 220 }} />}
-      {q.options?.length > 0 && <div style={{ fontSize: 13, display: 'grid', gap: 2, marginTop: 4 }}>{q.options.map(o => <div key={o.key}>({o.key}) <MathText text={o.text} /></div>)}</div>}
+      {q.options?.length > 0 && <div style={{ fontSize: 13, display: 'grid', gap: 2, marginTop: 4 }}>{q.options.map(o => <div key={o.key}>({o.key}) <MathText text={o.text} />
+        {o.has_figure && <AuthImg stamp={q.figure_stamp} src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Picture for option ' + o.key} style={{ display: 'block', margin: '4px 0 6px 22px', maxHeight: 140 }} />}</div>)}</div>}
       <div style={{ fontSize: 13, marginTop: 6 }}>{q.answer ? <span>Answer: <b><MathText text={q.answer} /></b></span> : <span className="tag warn">No answer</span>}
         {src && <span className={'tag ' + src[1]} style={{ marginLeft: 6 }}>{src[0]}</span>}
         {q.answer_source === 'ai' && q.confidence && <span className={'tag ' + (q.confidence === 'low' ? 'bad' : q.confidence === 'medium' ? 'warn' : 'ok')} style={{ marginLeft: 6 }}>{q.confidence} confidence</span>}
@@ -89,6 +90,7 @@ function QEdit({ q, chapters, onSave, onDelete, locked, onPage, onCrop, onNoFigu
 export default function PaperEditor({ pid, role, onBack }) {
   const { data: p, reload } = useLoad('/api/exams/papers/' + pid, [pid]); const toast = useToast()
   const [back, setBack] = useState(false); const [note, setNote] = useState(''); const [page, setPage] = useState(0); const [crop, setCrop] = useState(null); const [stamp, setStamp] = useState(0); const [exq, setExq] = useState(null)
+  const [cropFor, setCropFor] = useState('') // '' is the question's own figure, a letter is that option's picture
   const working = ['queued', 'running'].includes(p?.ai?.status)
   useEffect(() => { if (!working) return; const t = setInterval(reload, 3000); return () => clearInterval(t) }, [working, reload])
   const call = async (fn, msg) => { try { const r = await fn(); msg && toast(msg); await reload(); return r || true } catch (e) { toast(e.message, true); return false } }
@@ -109,6 +111,8 @@ export default function PaperEditor({ pid, role, onBack }) {
         {open && p.is_pdf && <button className="btn sm" disabled={working} onClick={async () => (!p.questions.length || await ask('Read the paper again with AI? This replaces the questions below, including your edits, when it finishes.')) && act('read_ai', 'Reading the paper')}>Read with AI</button>}
         {open && noAns > 0 && <button className="btn sm" disabled={working} onClick={() => act('answer_ai', 'Writing answers')}>Generate answers</button>}
         {role === 'super_admin' && p.status !== 'approved' && <button className="btn ghost sm" onClick={async () => { const r = await act('retag'); r && toast(`${r.tagged} of ${r.of} questions tagged to a chapter`) }}>Tag chapters</button>}
+        {role === 'super_admin' && p.questions.length > 0 && <button className="btn ghost sm" disabled={working} title="Fixes tables, spacing, options repeated in the question and question order. No AI, no cost."
+          onClick={async () => { const r = await act('tidy'); r && toast((r.changed || r.reordered ? `${r.changed} questions tidied${r.reordered ? ', printed order restored' : ''}` : 'Nothing to tidy') + (r.duplicates?.length ? `. Check: ${r.duplicates.join('; ')}` : ''), !!r.duplicates?.length) }}>Tidy text</button>}
         {role === 'super_admin' && ['draft', 'rejected'].includes(p.status) && <button className="btn ghost sm" onClick={() => act('submit', 'Sent to the reviewer')}>Send to a reviewer</button>}
         {open && <button className="btn primary sm" disabled={working} onClick={publish}>Publish to marketplace</button>}
         {p.status === 'in_review' && <><button className="btn sm" onClick={() => { setNote(''); setBack(true) }}>Send back</button>{role !== 'super_admin' && <button className="btn primary sm" onClick={() => act('approve', 'Paper approved')}>Approve paper</button>}</>}
@@ -121,7 +125,7 @@ export default function PaperEditor({ pid, role, onBack }) {
     <div className={page ? 'paper-split' : ''}>
       <div>
         {p.questions.map(q => <QEdit key={q.id + ':' + JSON.stringify(q)} q={{ ...q, figure_stamp: stamp }} chapters={p.chapters} locked={locked} onPage={setPage} onExplanations={p.status === 'approved' || p.status === 'in_review' ? setExq : null}
-          onCrop={p.is_pdf ? x => { setCrop(x); setPage(x.page || page || 1) } : null}
+          onCrop={p.is_pdf ? x => { setCrop(x); setCropFor(''); setPage(x.page || page || 1) } : null}
           onNoFigure={() => call(() => api(`/api/exams/questions/${q.id}/figure`, { method: 'POST', body: { box: null } }), 'Figure removed')}
           onSave={b => call(() => api('/api/exams/questions/' + q.id, { method: 'PUT', body: b }), 'Question saved')}
           onDelete={() => call(() => api('/api/exams/questions/' + q.id, { method: 'DELETE' }), 'Question deleted')} />)}
@@ -130,8 +134,13 @@ export default function PaperEditor({ pid, role, onBack }) {
       {page > 0 && <aside className="paper-original card"><div className="toolbar" style={{ padding: '8px 10px', margin: 0, gap: 6 }}>
         <button className="btn ghost sm" disabled={page < 2} onClick={() => setPage(page - 1)}>Previous</button><b>Page {page}</b>
         <button className="btn ghost sm" onClick={() => setPage(page + 1)}>Next</button></div>
-        {crop && <div className="note" style={{ margin: '0 10px 8px' }}>Drag around the figure for <b>Q{crop.number}</b>, including any picture options. <button className="btn ghost sm" onClick={() => setCrop(null)}>Cancel</button></div>}
-        {crop ? <CropPage src={`/api/exams/papers/${pid}/pages/${page}`} page={page} onBox={async (pg, box) => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { page: pg, box } }), 'Figure saved')) { setCrop(null); setStamp(s => s + 1) } }} />
+        {crop && <div className="note" style={{ margin: '0 10px 8px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          Drag around the picture for <b>Q{crop.number}</b>
+          {crop.options?.length > 0 && <select className="input" style={{ width: 'auto', padding: '2px 6px' }} aria-label="Picture for" value={cropFor} onChange={e => setCropFor(e.target.value)}>
+            <option value="">the question</option>{crop.options.map(o => <option key={o.key} value={o.key}>option ({o.key}){o.has_figure ? ', replace' : ''}</option>)}</select>}
+          {cropFor && crop.options?.find(o => o.key === cropFor)?.has_figure && <button className="btn ghost sm" onClick={async () => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { box: null, option: cropFor } }), 'Picture removed')) { setCrop(null); setStamp(s => s + 1) } }}>Remove this picture</button>}
+          <button className="btn ghost sm" onClick={() => setCrop(null)}>Cancel</button></div>}
+        {crop ? <CropPage src={`/api/exams/papers/${pid}/pages/${page}`} page={page} onBox={async (pg, box) => { if (await call(() => api(`/api/exams/questions/${crop.id}/figure`, { method: 'POST', body: { page: pg, box, option: cropFor } }), cropFor ? `Picture saved for option (${cropFor})` : 'Figure saved')) { setCrop(null); setStamp(s => s + 1) } }} />
           : <AuthImg src={`/api/exams/papers/${pid}/pages/${page}`} alt={'Page ' + page + ' of the original paper'} />}</aside>}
     </div>
     {exq && <Explanations q={exq} onClose={() => setExq(null)} />}

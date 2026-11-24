@@ -34,8 +34,19 @@ def pack_of(db, bid) -> Book:
     return b
 
 
+def public_options(options) -> list[dict]:
+    """Options as the screen gets them: a picture option says it has one, never where it is stored."""
+    return [{"key": o.get("key", ""), "text": o.get("text", ""), **({"has_figure": True} if o.get("figure") else {})} for o in options or []]
+
+
+def keep_option_figures(old, new) -> list[dict]:
+    """An edit sends options back without their stored pictures. Each option keeps its picture, matched by key."""
+    pics = {o.get("key"): o["figure"] for o in old or [] if o.get("figure")}
+    return [{"key": o.get("key", ""), "text": o.get("text", ""), **({"figure": pics[o.get("key")]} if o.get("key") in pics else {})} for o in new or []]
+
+
 def q_out(q: Question, answers=True):
-    d = {"id": q.id, "number": q.number, "section": q.section, "text": q.text, "options": q.options or [], "marks": q.marks,
+    d = {"id": q.id, "number": q.number, "section": q.section, "text": q.text, "options": public_options(q.options), "marks": q.marks,
          "chapter": q.chapter, "chapter_ref": q.chapter_ref or {}, "paper_id": q.paper_id, "qtype": q.qtype or ("mcq" if q.options else "written"),
          "page": q.page or 0, "has_figure": bool(q.figure_key)}
     if answers:
@@ -106,7 +117,7 @@ def make_paper(db, pack: Book, me, year: int, session: str, title: str, text: st
     matched = 0
     if key_name:
         try:
-            matched = P.apply_key(qs, P.parse_key(P.read_text_safe(Path(key_name).name, key_data)))
+            matched = P.apply_key(qs, P.parse_key(P.read_text_safe(Path(key_name).name, key_data, tables=False)))
         except Exception as e:
             raise HTTPException(422, f"Could not read the answer key: {str(e)[:120]}")
     p = QuestionPaper(book_id=pack.id, year=year, session=session.strip(), title=title.strip(), source_key=key, status="draft")
@@ -215,6 +226,8 @@ def edit_question(qid: int, body: QIn, db: Session = Depends(get_db), me=Depends
     ch = body.model_dump(exclude_none=True)
     if "answer" in ch and ch["answer"] != q.answer:
         q.answer_source, q.confidence = ("human" if ch["answer"] else ""), ""
+    if "options" in ch:
+        ch["options"] = keep_option_figures(q.options, ch["options"])
     for k, v in ch.items():
         setattr(q, k, v)
     if "chapter" in ch:
@@ -309,6 +322,7 @@ def paper_page(pid: int, n: int, db: Session = Depends(get_db), _=Depends(staff)
 class FigureIn(BaseModel):
     page: int = 0
     box: list[float] | None = None  # fractions of the page; none removes the figure
+    option: str = ""                # an option key: the picture is that option's, not the question's
 
 
 @router.post("/questions/{qid}/figure")
@@ -320,6 +334,8 @@ def set_figure(qid: int, body: FigureIn, db: Session = Depends(get_db), me=Depen
         raise HTTPException(404, "Question not found")
     p = db.get(QuestionPaper, q.paper_id)
     _editable(db, p, me)
+    if body.option:
+        return set_option_figure(db, q, p, body, me)
     if body.box is None:
         q.figure_key = ""
     else:
@@ -340,17 +356,62 @@ def set_figure(qid: int, body: FigureIn, db: Session = Depends(get_db), me=Depen
     return q_out(q)
 
 
-@router.get("/questions/{qid}/figure")
-def question_figure(qid: int, db: Session = Depends(get_db), me=Depends(require("super_admin", "reviewer", "student"))):
-    q = db.get(Question, qid)
-    if not q or not q.figure_key:
-        raise HTTPException(404, "No figure")
+def set_option_figure(db, q: Question, p: QuestionPaper, body: FigureIn, me):
+    """The picture of one option, drawn on the original page or removed."""
+    import pymupdf
+    if not any(o.get("key") == body.option for o in q.options or []):
+        raise HTTPException(422, "This question has no option " + body.option)
+    key = ""
+    if body.box is not None:
+        if len(body.box) != 4 or not (p.source_key or "").lower().endswith(".pdf"):
+            raise HTTPException(422, "Draw the picture on a page of the original PDF")
+        store = get_storage()
+        with pymupdf.open(stream=store.get(p.source_key), filetype="pdf") as doc:
+            if not 1 <= body.page <= len(doc):
+                raise HTTPException(422, "No such page")
+            pg = doc[body.page - 1]; r = pg.rect; b = body.box
+            clip = pymupdf.Rect(b[0] * r.width, b[1] * r.height, b[2] * r.width, b[3] * r.height) & r
+            if clip.is_empty or clip.width < 8 or clip.height < 8:
+                raise HTTPException(422, "That area is too small")
+            key = f"papers/{p.book_id}/figures/{p.id}_{q.id}_{body.option}.png"
+            store.put(key, pg.get_pixmap(dpi=200, clip=clip).tobytes("png"))
+    opts = []
+    for o in q.options or []:
+        o = {k: v for k, v in o.items() if k != "figure"} if o.get("key") == body.option else dict(o)
+        if o.get("key") == body.option and key:
+            o["figure"] = key
+        opts.append(o)
+    q.options = opts  # a new list, so the JSON column is saved
+    log(db, me, "paper.question_edit", "question", q.id, fields=["option_figure"], option=body.option)
+    db.commit()
+    return q_out(q)
+
+
+def _figure_access(db, me, q: Question):
     paper = db.get(QuestionPaper, q.paper_id)
     if me.role == "student":
         owned_pack(db, me, paper.book_id)
         if paper.status != "approved":
             raise HTTPException(404, "No figure")
+
+
+@router.get("/questions/{qid}/figure")
+def question_figure(qid: int, db: Session = Depends(get_db), me=Depends(require("super_admin", "reviewer", "student"))):
+    q = db.get(Question, qid)
+    if not q or not q.figure_key:
+        raise HTTPException(404, "No figure")
+    _figure_access(db, me, q)
     return Response(get_storage().get(q.figure_key), media_type="image/png")
+
+
+@router.get("/questions/{qid}/options/{key}/figure")
+def option_figure(qid: int, key: str, db: Session = Depends(get_db), me=Depends(require("super_admin", "reviewer", "student"))):
+    q = db.get(Question, qid)
+    pic = next((o.get("figure") for o in (q.options or [] if q else []) if o.get("key") == key), None)
+    if not pic:
+        raise HTTPException(404, "No figure")
+    _figure_access(db, me, q)
+    return Response(get_storage().get(pic), media_type="image/png")
 
 
 @router.post("/papers/{pid}/{action}")
@@ -369,6 +430,17 @@ def paper_action(pid: int, action: str, body: dict | None = None, db: Session = 
         return start_ai(db, p, action, me)
     if action == "publish":
         return publish(db, p, me)
+    if action == "tidy":
+        # Repairs text saved before the clean-up existed (tables, spacing, repeated options, order). No model call.
+        if me.role != "super_admin":
+            raise HTTPException(403, "Not allowed for your role")
+        if p.ai_status in ("queued", "running"):
+            raise HTTPException(409, "The AI is still working on this paper")
+        from ..tidy import tidy_paper
+        r = tidy_paper(db, pid, apply=True)
+        log(db, me, "paper.tidy", "paper", pid, changed=len(r["changed"]), reordered=r["reordered"])
+        db.commit()
+        return {"changed": len(r["changed"]), "reordered": r["reordered"], "duplicates": r["duplicates"]}
     if action == "retag":
         if me.role != "super_admin":
             raise HTTPException(403, "Not allowed for your role")

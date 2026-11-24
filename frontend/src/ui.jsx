@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { splitMath, parseArray, cellPlain } from './mathParse'
 import { api, auth } from './api'
 
 const P = {
@@ -44,11 +45,22 @@ export const Icon = ({ n, s = 18 }) => (
   <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={P[n]} /></svg>
 )
 
-// Text with maths between $ signs, as the AI paper reader writes it.
+// Text with maths between $ signs, as the AI paper reader writes it. $$...$$ is a block of its own, and a
+// $$\begin{array}...\end{array}$$ table is drawn as a real table so long cells wrap (see mathParse.js).
+const tex = (s, display) => ({ __html: katex.renderToString(s, { throwOnError: false, displayMode: display }) })
+const Cell = ({ c }) => { const p = cellPlain(c); return p != null ? p : <span dangerouslySetInnerHTML={tex(c)} /> }
+function MathBlock({ value }) {
+  const t = parseArray(value)
+  if (!t) return <div className="mt-display" dangerouslySetInnerHTML={tex(value, true)} />
+  return <div className="mt-table"><table><tbody>{t.rows.map((r, i) => <tr key={i}>{r.map((c, j) => t.header && i === 0
+    ? <th key={j}><Cell c={c} /></th> : <td key={j}><Cell c={c} /></td>)}</tr>)}</tbody></table></div>
+}
 export function MathText({ text, style }) {
-  const parts = String(text ?? '').split(/(\$[^$\n]+\$)/)
-  return <span style={{ whiteSpace: 'pre-wrap', ...style }}>{parts.map((p, i) => p.length > 2 && p.startsWith('$') && p.endsWith('$')
-    ? <span key={i} dangerouslySetInnerHTML={{ __html: katex.renderToString(p.slice(1, -1), { throwOnError: false }) }} /> : <span key={i}>{p}</span>)}</span>
+  const parts = useMemo(() => splitMath(text), [text])
+  return <span style={{ whiteSpace: 'pre-wrap', ...style }}>{parts.map((p, i) => p.kind === 'display' ? <MathBlock key={i} value={p.value} />
+    : p.kind === 'inline' ? <span key={i} dangerouslySetInnerHTML={tex(p.value)} />
+    // a block already breaks the line, so the line breaks around it in the text would show as blank lines
+    : <span key={i}>{p.value.replace(parts[i - 1]?.kind === 'display' ? /^[ \t]*\n/ : /(?!)/, '').replace(parts[i + 1]?.kind === 'display' ? /\n[ \t]*$/ : /(?!)/, '')}</span>)}</span>
 }
 
 // A picture behind sign in. A plain img tag cannot send the sign in token.

@@ -6,6 +6,7 @@ and every question it produces goes to a reviewer before a student sees it."""
 import io, os, re, subprocess, sys, tempfile
 from collections import Counter
 from pathlib import Path
+from .qtext import clean, drop_echoed_options
 
 Q_RE = re.compile(r"^\s*(?:Q(?:uestion)?\s*\.?\s*(\d{1,3})\s*[\.\):\-]?|(\d{1,3})\s*[\.\)])\s*(\S.*)?$", re.I)
 OPT_RE = re.compile(r"^\s*(?:\(([a-dA-D1-4])\)|([a-dA-D])[\)\.])(?:\s+(\S.*))?$")
@@ -18,35 +19,92 @@ SEC_RE = re.compile(r"^\s*(?:[A-Za-z&]+\s+){0,2}?(section|part)\s+([A-Z]|[IVX]+|
 MARKS_RE = re.compile(r"[\[\(]\s*(\d+(?:\.\d+)?)\s*marks?\s*[\]\)]\s*$", re.I)
 
 
-def read_text(name: str, data: bytes) -> str:
+def _md_row(cells) -> str:
+    """One table row as | a | b |, the form split_questions keeps on its own line and qtext turns into a table."""
+    return "| " + " | ".join(re.sub(r"\s+", " ", str(c or "")).replace("|", "/").strip() for c in cells) + " |"
+
+
+def _docx_rows(t, tables: bool) -> list[str]:
+    out = []
+    for r in t.rows:
+        cells, last = [], None
+        for c in r.cells:
+            if c._tc is last:
+                continue  # a merged cell is listed once per column it spans
+            last = c._tc
+            cells.append(c.text)
+        out.append(_md_row(cells) if tables else "  ".join(cells))
+    return out
+
+
+def _pdf_page_text(pg, tables: bool) -> str:
+    """A page's text in reading order, with each ruled table written in place as | a | b | rows.
+    A box around the whole page, or a 'table' of one row or column, is layout and stays plain text."""
+    if not tables:
+        return pg.get_text()
+    import pymupdf
+    try:
+        area = pg.rect.width * pg.rect.height
+        found = [t for t in pg.find_tables().tables
+                 if t.row_count >= 2 and t.col_count >= 2 and pymupdf.Rect(t.bbox).get_area() < .5 * area]
+    except Exception:
+        found = []
+    if not found:
+        return pg.get_text()
+    boxes, done, out = [pymupdf.Rect(t.bbox) for t in found], set(), []
+    for b in pg.get_text("blocks"):
+        if b[6] != 0:
+            continue  # a picture block
+        r = pymupdf.Rect(b[:4])
+        mid = pymupdf.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+        hit = next((i for i, tb in enumerate(boxes) if tb.contains(mid)), None)
+        if hit is None:
+            out.append(b[4].rstrip("\n"))
+        elif hit not in done:
+            done.add(hit)
+            try:
+                rows = [row for row in found[hit].extract() if any(c for c in row)]
+                out += [_md_row(row) for row in rows]
+            except Exception:
+                out.append(b[4].rstrip("\n"))
+    return "\n".join(out)
+
+
+def read_text(name: str, data: bytes, tables: bool = True) -> str:
+    """tables=True keeps each table where it is printed, as | a | b | rows. An answer key is read with tables=False,
+    because its number-and-letter pairs are matched as plain text."""
     n = name.lower()
     if n.endswith(".docx"):
         import docx
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
         d = docx.Document(io.BytesIO(data))
         lines = []
-        for p in d.paragraphs:
-            if (p.style.name or "").replace(" ", "") == "EVNote" and re.fullmatch(r"\s*Page\s+\d+\s*", p.text or ""):
-                continue  # M1 page marker
-            lines.append(p.text)
-        for t in d.tables:
-            for r in t.rows:
-                lines.append("  ".join(c.text for c in r.cells))
+        for el in d.element.body.iterchildren():  # paragraphs and tables in the order they are printed
+            tag = el.tag.rsplit("}", 1)[-1]
+            if tag == "p":
+                p = Paragraph(el, d)
+                if (p.style.name or "").replace(" ", "") == "EVNote" and re.fullmatch(r"\s*Page\s+\d+\s*", p.text or ""):
+                    continue  # M1 page marker
+                lines.append(p.text)
+            elif tag == "tbl":
+                lines += _docx_rows(Table(el, d), tables)
         return "\n".join(lines)
     if n.endswith(".pdf"):
         import pymupdf
         with pymupdf.open(stream=data, filetype="pdf") as doc:
-            return "\n".join(pg.get_text() for pg in doc)
+            return "\n".join(_pdf_page_text(pg, tables) for pg in doc)
     return data.decode("utf-8", errors="replace")
 
 
-def read_text_safe(name: str, data: bytes) -> str:
+def read_text_safe(name: str, data: bytes, tables: bool = True) -> str:
     """PDFs are read in a separate process, so a crash in the PDF library fails this upload and not the website."""
     if not name.lower().endswith(".pdf"):
-        return read_text(name, data)
+        return read_text(name, data, tables)
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "paper.pdf"
         f.write_bytes(data)
-        r = subprocess.run([sys.executable, "-m", "app.paperread", str(f)], capture_output=True, timeout=180,
+        r = subprocess.run([sys.executable, "-m", "app.paperread", str(f)] + ([] if tables else ["plain"]), capture_output=True, timeout=180,
                            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)})
     if r.returncode:
         raise ValueError("The PDF could not be opened. Check that it is a normal, unlocked PDF.")
@@ -84,6 +142,26 @@ def _split_inline_options(text):
     return text, []
 
 
+def _option_run(first: str, text: str, paren: bool) -> list[tuple[str, str]]:
+    """'Brown algae   b. Red algae' after an 'a.' mark -> [(a, Brown algae), (b, Red algae)].
+    Only the next letters in order, printed in the same style, start a new option, so 'Vitamin B. deficiency' under
+    option (a) stays one option."""
+    out = [(first, text)]
+    seq = "abcd" if first.lower() in "abcd" else "1234"
+    i = seq.index(first.lower())
+    while i + 1 < len(seq):
+        nk = seq[i + 1].upper() if first.isupper() else seq[i + 1]
+        mark = rf"\(\s*{nk}\s*\)" if paren else rf"(?<![A-Za-z0-9]){nk}\s*[.)]"
+        m = re.search(r"(?:^|\s)" + mark + r"\s+", out[-1][1])
+        if not m:
+            break
+        k, t = out[-1]
+        out[-1] = (k, t[:m.start()].strip())
+        out.append((nk, t[m.end():].strip()))
+        i += 1
+    return [(k.lower(), t) for k, t in out]
+
+
 def split_questions(text: str) -> list[dict]:
     out, cur, section, mode, last_no, fresh = [], None, "", "q", 0, False
     lines = text.splitlines()
@@ -97,6 +175,9 @@ def split_questions(text: str) -> list[dict]:
                 cur["marks"] = float(m.group(1)); cur["text"] = cur["text"][:m.start()].strip()
             if not cur["options"]:
                 cur["text"], cur["options"] = _split_inline_options(cur["text"])
+            # The same tidying as AI reading: tables drawn as tables, formulas as maths, no option copied into the text.
+            cur["options"] = [{"key": o["key"], "text": clean(o["text"])} for o in cur["options"]]
+            cur["text"] = drop_echoed_options(clean(cur["text"]), cur["options"])
             a = cur["answer"].strip()
             ma = re.match(r"^\(?([a-dA-D1-4])\)?(?:[\s.)]|$)", a)
             if cur["options"] and ma:
@@ -134,17 +215,26 @@ def split_questions(text: str) -> list[dict]:
         so = SOL_RE.match(line)
         if so:
             cur["solution"] = so.group(1); mode = "s"; continue
+        if line.startswith("|") and mode == "q":
+            cur["text"] += "\n" + line  # a table row keeps its own line
+            continue
         o = OPT_RE.match(line) if mode == "q" else None
         if o:
-            k = (o.group(1) or o.group(2)).lower()
+            printed = o.group(1) or o.group(2)
+            k = printed.lower()
             if k.isalpha() and cur["options"] and cur["options"][0]["key"].isdigit():
                 # (1) (2) were numbered statements in the question, and these letters are the real options
                 cur["text"] += " " + " ".join(f"({x['key']}) {x['text']}" for x in cur["options"]); cur["options"] = []
-            cur["options"].append({"key": k, "text": (o.group(3) or "").strip()}); continue
+            # Several options printed on one line: a. Brown algae   b. Red algae
+            for ok, ot in _option_run(printed, (o.group(3) or "").strip(), paren=o.group(1) is not None):
+                cur["options"].append({"key": ok, "text": ot})
+            continue
         if mode == "s":
             cur["solution"] += "\n" + line
         elif mode == "a":
             cur["answer"] += " " + line
+        elif cur["text"].rsplit("\n", 1)[-1].startswith("|"):
+            cur["text"] += "\n" + line  # the text after a table starts a new line
         elif cur["options"]:
             cur["options"][-1]["text"] += " " + line
         else:

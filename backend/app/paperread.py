@@ -1,6 +1,8 @@
-"""Reads a PDF's text layer in its own process: python -m app.paperread <file>. A crash here cannot reach the website."""
+"""Reads a PDF's text layer in its own process: python -m app.paperread <file> [plain]. A crash here cannot reach the website.
+'plain' leaves tables as plain text, for answer keys."""
 import sys
 from pathlib import Path
 from .papers import read_text
 
-sys.stdout.buffer.write(read_text(Path(sys.argv[1]).name, Path(sys.argv[1]).read_bytes()).encode("utf-8"))
+f = Path(sys.argv[1])
+sys.stdout.buffer.write(read_text(f.name, f.read_bytes(), tables="plain" not in sys.argv[2:]).encode("utf-8"))

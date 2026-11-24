@@ -20,7 +20,8 @@ export function Options({ q, value, onChange, result, disabled }) {
     const cls = result ? (answers.includes(o.key) ? ' right' : on ? ' wrong' : '') : on ? ' on' : ''
     return <button key={o.key} type="button" className={'opt' + cls} disabled={disabled} role={q.qtype === 'multi' ? 'checkbox' : 'radio'} aria-checked={on}
       onClick={() => onChange(q.qtype === 'multi' ? (on ? chosen.filter(x => x !== o.key) : [...chosen, o.key]).sort().join(',') : (on ? '' : o.key))}>
-      <span className="k">{o.key}</span><span style={{ flex: 1, minWidth: 0 }}><MathText text={o.text} /></span></button>
+      <span className="k">{o.key}</span><span style={{ flex: 1, minWidth: 0 }}><MathText text={o.text} />
+        {o.has_figure && <AuthImg src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Option ' + o.key} style={{ display: 'block', maxHeight: 180, marginTop: o.text ? 6 : 0 }} />}</span></button>
   })}</div>
 }
 

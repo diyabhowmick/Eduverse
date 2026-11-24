@@ -370,3 +370,11 @@ span.chip{cursor:default}
 .m2-note{margin-top:6px;font-size:12.5px;color:var(--ink-2);background:var(--panel);border-radius:8px;padding:7px 10px}
 .m2-opt{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .m2-opt:last-child{border-bottom:0;padding-bottom:0}.m2-opt p{margin:4px 0 0;font-size:13px}.m2-opt .m1-bool{flex:none}
+
+/* Tables and display maths inside question text (MathText) */
+.mt-table{display:block;overflow-x:auto;margin:8px 0;white-space:normal}
+.mt-table table{border-collapse:collapse;font-size:.95em;min-width:min(100%,360px)}
+.mt-table td,.mt-table th{border:1px solid var(--line-2);padding:5px 10px;text-align:left;vertical-align:top}
+.mt-table th{background:var(--panel);font-weight:600}
+.mt-display{display:block;overflow-x:auto;overflow-y:hidden;margin:6px 0;white-space:normal}
+.mt-display .katex-display{margin:0;text-align:left}

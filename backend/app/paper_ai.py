@@ -8,6 +8,7 @@ from .db import SessionLocal
 from .models import Book, Question, QuestionPaper, Setting
 from .defaults import AI
 from .llm_client import openai_json
+from .qtext import clean, drop_echoed_options, question_number, strip_option_mark, similar
 from .storage import get_storage
 
 READ_PROMPT = """This is page {page} of {pages} of an exam question paper{exam}. Image 1 is the whole page. Images 2 and 3 are zoomed views of its left and right
@@ -15,10 +16,10 @@ halves: read the words and maths from those, and use image 1 for the layout and 
 Copy {which} exactly, ignoring logos, headers and footers.
 The section heading in force at the end of the previous page was: {section}. A heading applies only to questions printed after it, so questions above the first heading on this page belong to that section.
 Return JSON: {{"questions": [{{
- "number": "question number as printed",
+ "number": "the question number exactly as printed, digits only: 7, not Q7 or 7.",
  "section": "the full heading in force for this question, e.g. Mathematics Section B",
- "text": "the question, with any table written out. Write all maths as LaTeX between $ signs, e.g. $x^2+1$. Do not solve or change anything",
- "options": [{{"key": "a", "text": "option, maths in $ signs"}}],
+ "text": "the question only, never its options, which go in options. Write any table out as described below. Write all maths as LaTeX between $ signs, e.g. $x^2+1$. Do not solve or change anything",
+ "options": [{{"key": "a", "text": "the option's text only, without its (a) or a. mark, maths in $ signs", "figure_box": null}}],
  "type": "mcq, multi (more than one correct), numeric (no options, the answer is a typed number) or written",
  "answer": "only if the answer is printed on this page, else empty",
  "marks": 0,
@@ -26,7 +27,14 @@ Return JSON: {{"questions": [{{
  "continued": false
 }}]}}
 Option keys are lower case a, b, c, d in printed order, even if the paper prints (1) (2) (3) (4) or (A) (B). Options often sit several on one line, or follow statements such as A. B. C. D. inside the question: always capture all of them.
-figure_box is the diagram that belongs to the question, as fractions of image 1 from 0 to 1, or null if there is none. A table is not a diagram: write it out in the text as a LaTeX array, with null here. If the options are pictures, make figure_box include all of them and set each option's text to "Option A in the figure", and so on.
+Do not repeat the options inside text. Statements labelled A. B. C. D. or (i) (ii) that the options refer to belong in text; the answer choices themselves do not.
+Words stay plain words: never use \\textit, \\textbf, \\emph or any other LaTeX outside $ signs, and never put a sentence inside $ signs. Write italic names such as Selaginella as ordinary words. Keep the spaces between words.
+figure_box is the diagram that belongs to the question, as fractions of image 1 from 0 to 1, or null if there is none. Make it include the whole diagram with all its labels, arrows and axis values, and nothing else. A table is not a diagram: write it out in text, with null here.
+Write a table (for example Match List-I with List-II) on its own lines inside $$ signs as a LaTeX array with ruled borders, one printed row per line:
+$$\\begin{{array}}{{|l|l|l|l|}} \\hline \\text{{List-I}} & & \\text{{List-II}} & \\\\ \\hline \\text{{A.}} & \\text{{Lenticels}} & \\text{{(i)}} & \\text{{Phellogen}} \\\\ \\hline \\end{{array}}$$
+Put words in a cell inside \\text{{}} and maths in a cell without $ signs. Keep every row and column, in printed order, and the sentence after the table as ordinary text.
+If the options are pictures (graphs, circuits, structures), give each option its own figure_box around just its picture, and set its text to any words printed with that picture, or "" if there are none. The question's figure_box then covers only the question's own diagram, or is null.
+Keep questions in printed order. Numbering may start again at 1 in a new section or subject: keep the printed number, never renumber.
 continued is true only when the question began on the previous page. Never invent a question.
 The page edge may cut off the end of a line. Never guess a number, sign, symbol or formula: where any is cut off or cannot be read, write [unclear] at that spot. Only finish a plain English word when it is certain."""
 
@@ -52,23 +60,31 @@ def progress(db, p, **kw):
     db.commit()
 
 
-def clean(text: str) -> str:
-    """A LaTeX \\text or \\newline can arrive with its backslash read as a tab or line break, or as stray HTML."""
-    text = text.replace("\t" + "ext", "\\text").replace("\\newline", "\n").replace("</br>", "\n").replace("<br>", "\n").replace("<br/>", "\n")
-    return "\n".join(f"${l.strip()}$" if "\\" in l and "$" not in l else l for l in text.split("\n"))
-
-
-def maths(text: str) -> str:
-    """Some models drop the $ signs on an option that is all maths, such as \\frac{1}{2}."""
-    return f"${text}$" if "\\" in text and "$" not in text else text
+def norm_options(raw) -> list[dict]:
+    """Keys a, b, c, d in printed order whatever the paper printed ((1), (A), a.), each text cleaned and without its own mark."""
+    out = []
+    for o in raw or []:
+        if not isinstance(o, dict):
+            continue
+        k = str(o.get("key", "")).strip("() .").lower()
+        if not re.fullmatch(r"[a-h]", k) or k in {x["key"] for x in out}:
+            k = "abcdefgh"[len(out)] if len(out) < 8 else str(len(out) + 1)
+        opt = {"key": k, "text": clean(strip_option_mark(k, str(o.get("text", ""))))}
+        if re.fullmatch(r"(?i)option\s+[a-d1-4]\s+in the figure\.?|picture|image|figure", opt["text"].strip()):
+            opt["text"] = ""
+        if isinstance(o.get("figure_box"), list) and len(o["figure_box"]) == 4:
+            opt["_box"] = o["figure_box"]  # cropped when the question is saved, then removed
+        out.append(opt)
+    return out
 
 
 def norm_question(q: dict, position: int, page: int) -> dict:
-    options = [{"key": str(o.get("key", "")).lower(), "text": maths(clean(str(o.get("text", ""))))} for o in q.get("options") or [] if isinstance(o, dict)]
+    options = norm_options(q.get("options"))
+    text = drop_echoed_options(clean(q.get("text")), options)
     qtype = q.get("type") if q.get("type") in ("mcq", "multi", "numeric", "written") else ("mcq" if options else "written")
-    if not options and qtype == "mcq":
+    if not options and qtype in ("mcq", "multi"):
         qtype = "written"
-    if not options and qtype == "written" and re.search(r"_{2,}", str(q.get("text") or "")):
+    if not options and qtype == "written" and re.search(r"_{2,}", text):
         qtype = "numeric"  # a blank to fill and nothing to choose from
     answer = str(q.get("answer") or "").strip()
     if options:
@@ -80,7 +96,7 @@ def norm_question(q: dict, position: int, page: int) -> dict:
     section = str(q.get("section") or "").strip()
     if section.lower() in ("none", "null", "n/a") or section.startswith("there is no"):
         section = ""
-    return {"number": str(q.get("number") or "").strip(" .):")[:20], "section": section[:60], "text": clean(str(q.get("text") or "")), "options": options,
+    return {"number": question_number(q.get("number")), "section": section[:60], "text": text, "options": options,
             "qtype": qtype, "answer": answer, "answer_source": "paper" if answer else "", "marks": marks, "position": position, "page": page}
 
 
@@ -134,37 +150,200 @@ def embedded_images(doc):
     return {i: [b for b in bs if seen[b] < limit] for i, bs in found.items()}
 
 
-def snap(box, images):
-    """Models give rough coordinates. When a real picture sits there, use the picture's exact edges."""
+def drawn_regions(page) -> list[tuple]:
+    """Diagrams drawn as lines rather than pasted in as pictures (circuits, ray diagrams, graphs, structures), as fractions
+    of the page. Each line of a diagram is its own path, so paths close together are merged into one region. Rules across
+    the page, column separators and page frames are left out, since they belong to the layout and not to any question."""
+    r = page.rect
+    W, H = r.width, r.height
+    try:
+        paths = page.get_drawings()
+    except Exception:
+        return []
+    rects = []
+    for d in paths:
+        b = d.get("rect")
+        if b is None or b.is_empty and b.width == 0 and b.height == 0:
+            continue
+        w, h = b.width, b.height
+        if (w > .6 * W and h < .02 * H) or (h > .6 * H and w < .02 * W) or w * h > .5 * W * H:
+            continue
+        rects.append([b.x0, b.y0, b.x1, b.y1])
+    if not rects or len(rects) > 4000:
+        return []
+    gap = 6  # points: lines of one diagram touch or nearly touch
+    clusters = []
+    for x0, y0, x1, y1 in rects:
+        c = [x0, y0, x1, y1]
+        merged = True
+        while merged:
+            merged = False
+            for o in clusters:
+                if o[0] - gap <= c[2] and c[0] <= o[2] + gap and o[1] - gap <= c[3] and c[1] <= o[3] + gap:
+                    c = [min(c[0], o[0]), min(c[1], o[1]), max(c[2], o[2]), max(c[3], o[3])]
+                    clusters.remove(o); merged = True
+                    break
+        clusters.append(c)
+    return [(c[0] / W, c[1] / H, c[2] / W, c[3] / H) for c in clusters if c[2] - c[0] > .04 * W and c[3] - c[1] > .02 * H]
+
+
+def text_lines(page) -> list[tuple]:
+    """Every printed line of text as a box, in fractions of the page: the labels a diagram may have beside it."""
+    r = page.rect
+    out = []
+    try:
+        for b in page.get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                x0, y0, x1, y1 = ln["bbox"]
+                out.append((x0 / r.width, y0 / r.height, x1 / r.width, y1 / r.height))
+    except Exception:
+        pass
+    return out
+
+
+def snap(box, images, drawn=(), lines=()):
+    """Models give rough coordinates. When a real picture or a drawn diagram sits there, use its exact edges.
+    A drawn diagram also takes in the short labels printed just beside its lines (R, A, 30 deg, axis values): a text line
+    counts only when the whole line sits in that narrow band, so a line of the question's own text never does."""
     x0, y0, x1, y1 = box[0] - .04, box[1] - .04, box[2] + .04, box[3] + .04
-    hits = []
-    for b in images:
+    area = (x1 - x0) * (y1 - y0)
+    hits, any_drawn = [], False
+    for b, is_drawn in [(b, False) for b in images] + [(b, True) for b in drawn]:
         w, h = min(x1, b[2]) - max(x0, b[0]), min(y1, b[3]) - max(y0, b[1])
-        if w > 0 and h > 0 and w * h >= .3 * (b[2] - b[0]) * (b[3] - b[1]):
-            hits.append(b)
+        size = (b[2] - b[0]) * (b[3] - b[1])
+        # Most of the region lies in the model's box, and it is not a whole table grid or block far bigger than the box.
+        if w > 0 and h > 0 and w * h >= .3 * size and size <= 3 * area:
+            hits.append(b); any_drawn |= is_drawn
     if not hits:
-        return box
-    return [min(b[0] for b in hits), min(b[1] for b in hits), max(b[2] for b in hits), max(b[3] for b in hits)]
+        return [box[0] - .005, box[1] - .005, box[2] + .005, box[3] + .005]
+    out = [min(b[0] for b in hits), min(b[1] for b in hits), max(b[2] for b in hits), max(b[3] for b in hits)]
+    if any_drawn:
+        bx, by = .03, .02  # about 18 points across, 17 down, on an A4 page
+        for l in lines:
+            if out[0] - bx <= l[0] and l[2] <= out[2] + bx and out[1] - by <= l[1] and l[3] <= out[3] + by:
+                out = [min(out[0], l[0]), min(out[1], l[1]), max(out[2], l[2]), max(out[3], l[3])]
+    pad = .006
+    return [out[0] - pad, out[1] - pad, out[2] + pad, out[3] + pad]
+
+
+def crop(doc, page_no, box, images, drawn_cache) -> bytes | None:
+    """The figure at box on a page, snapped to what is really printed there, as a PNG at print quality."""
+    import pymupdf
+    try:
+        box = [float(v) for v in box]
+    except (TypeError, ValueError):
+        return None
+    if len(box) != 4 or not (0 < page_no <= len(doc)):
+        return None
+    pg = doc[page_no - 1]
+    if page_no not in drawn_cache:
+        drawn_cache[page_no] = (drawn_regions(pg), text_lines(pg))
+    box = snap(box, images.get(page_no, []), *drawn_cache[page_no])
+    r = pg.rect
+    clip = pymupdf.Rect(box[0] * r.width, box[1] * r.height, box[2] * r.width, box[3] * r.height) & r
+    if clip.is_empty or clip.width <= 8 or clip.height <= 8:
+        return None
+    return pg.get_pixmap(dpi=200, clip=clip).tobytes("png")
+
+
+BIG_JUMP = 10  # a gap wider than this is a misread number, not ten skipped questions
+
+
+def run_ids(rows) -> list[int]:
+    """Questions stay in the order they are printed. A paper whose numbering starts again (Physics 1-25, Chemistry 1-25)
+    has one run per restart, so Physics Q4 and Chemistry Q4 are two questions, never mixed up or sorted together.
+    A number going back counts as a restart only when it goes back to the start (1 to 3) or the section changes;
+    otherwise it is a misread number inside the same run."""
+    ids, run, prev, prev_sec = [], 0, 0, None
+    for d, _ in rows:
+        n = as_int(d["number"])
+        if n and prev and n < prev and (n <= 3 or d["section"] != prev_sec):
+            run += 1
+        ids.append(run)
+        if n:
+            prev, prev_sec = n, d["section"]
+    return ids
+
+
+def numbering(rows):
+    """What is wrong with the numbering, run by run: numbers absent, numbers read twice, and jumps too wide to be gaps.
+    Also questions without options in a section where nearly all have them."""
+    ids = run_ids(rows)
+    missing, dupes, jumps, lost = [], [], [], []
+    for run in sorted(set(ids)):
+        mine = [(i, rows[i][0]) for i in range(len(rows)) if ids[i] == run]
+        seen = {}
+        for i, d in mine:
+            n = as_int(d["number"])
+            if n:
+                seen.setdefault(n, []).append(i)
+        dupes += [(run, n, idx) for n, idx in seen.items() if len(idx) > 1]
+        nums = sorted(seen)
+        for a, b in zip(nums, nums[1:]):
+            if b - a > BIG_JUMP:
+                jumps.append((mine[0][1]["section"], a, b))
+            else:
+                for n in range(a + 1, b):
+                    page = next(rows[i][0]["page"] for i in reversed(seen[a]))
+                    missing.append({"run": run, "n": n, "page": page, "section": rows[seen[a][-1]][0]["section"]})
+        by_section = {}
+        for i, d in mine:
+            by_section.setdefault(d["section"], []).append(d)
+        for ds in by_section.values():
+            if len(ds) >= 4 and sum(1 for d in ds if d["options"]) / len(ds) >= .7:
+                lost += [{"run": run, "n": as_int(d["number"]), "page": d["page"], "section": d["section"]} for d in ds if not d["options"] and as_int(d["number"])]
+    return missing, lost, dupes, jumps
 
 
 def needs_reread(rows):
-    """Question numbers absent from the run, and questions without options in a section where nearly all have them."""
-    nums = sorted(n for n in (as_int(d["number"]) for d, _ in rows) if n)
-    missing = [n for n in range(nums[0], nums[-1] + 1) if n not in nums] if nums else []
-    lost, by_section = [], {}
-    for d, _ in rows:
-        by_section.setdefault(d["section"], []).append(d)
-    for ds in by_section.values():
-        if len(ds) >= 4 and sum(1 for d in ds if d["options"]) / len(ds) >= .7:
-            lost += [as_int(d["number"]) for d in ds if not d["options"]]
+    missing, lost, _, _ = numbering(rows)
     return missing, lost
+
+
+def merge_duplicates(rows) -> list[str]:
+    """The same question read twice, usually across a page break, is kept once: the fuller reading wins.
+    Two different questions printed with the same number are both kept, and reported."""
+    report = []
+    while True:
+        _, _, dupes, _ = numbering(rows)
+        for run, n, idx in dupes:
+            a, b = idx[0], idx[1]
+            da, db_ = rows[a][0], rows[b][0]
+            if not similar(da["text"], db_["text"]):
+                continue
+            keep, drop = (a, b) if (len(da["options"]), len(da["text"])) >= (len(db_["options"]), len(db_["text"])) else (b, a)
+            box = rows[keep][1] or rows[drop][1]
+            rows[keep] = (rows[keep][0], box)
+            del rows[drop]
+            break
+        else:
+            for run, n, idx in dupes:
+                sec = rows[idx[0]][0]["section"]
+                report.append(f"Question {n}{' in ' + sec if sec else ''} is printed twice with different text. Check its number against the original.")
+            return report
+
+
+def place(rows, run: int, n: int, d: dict, box):
+    """Puts a re-read question back where it is printed: after the question before it in the same run."""
+    ids = run_ids(rows)
+    same = [i for i in range(len(rows)) if ids[i] == run]
+    hit = next((i for i in same if as_int(rows[i][0]["number"]) == n), None)
+    if hit is not None:
+        if d["options"] and not rows[hit][0]["options"]:
+            rows[hit] = (d, box or rows[hit][1])
+        return
+    before = [i for i in same if 0 < as_int(rows[i][0]["number"]) < n]
+    at = (before[-1] + 1) if before else (same[0] if same else len(rows))
+    rows.insert(at, (d, box))
 
 
 def add_rows(rows, found, i, section):
     for q in found:
         if q.get("continued") and rows:
-            rows[-1][0]["text"] = (rows[-1][0]["text"] + " " + str(q.get("text") or "")).strip()
-            rows[-1][0]["options"] += norm_question(q, 0, i)["options"]
+            last = rows[-1][0]
+            more = norm_question(q, 0, i)
+            last["options"] += [o for o in more["options"] if o["key"] not in {x["key"] for x in last["options"]}]
+            last["text"] = drop_echoed_options((last["text"] + "\n" + more["text"]).strip(), last["options"])
             continue
         if str(q.get("text") or "").strip() or q.get("options"):
             d = norm_question(q, len(rows), i)
@@ -190,58 +369,68 @@ def read(paper_id: int):
             for i, page in enumerate(doc, 1):
                 section = add_rows(rows, read_page(page, i, total, exam, section, model, base_url, key, paper_id=paper_id), i, section)
                 progress(db, p, ai_done=i)
+            merge_duplicates(rows)
             # A model skipping a question must not go unnoticed: ask again for exactly what is absent.
             for _ in range(2):
                 missing, lost = needs_reread(rows)
                 if not missing and not lost:
                     break
                 progress(db, p, ai_stage="Checking for missed questions", ai_done=0, ai_total=0)
-                pages = {}
-                for n in missing + lost:
-                    before = [d["page"] for d, _ in rows if 0 < as_int(d["number"]) <= n]
-                    start = max(before) if before else 1
-                    for pg in {start, min(start + 1, total)}:
-                        pages.setdefault(pg, set()).add(n)
-                for pg, nums in sorted(pages.items()):
+                pages = {}  # page -> {number: what is wanted}
+                for m in missing:
+                    for pg in {m["page"], min(m["page"] + 1, total)}:
+                        pages.setdefault(pg, {}).setdefault(m["n"], m)
+                for m in lost:
+                    pages.setdefault(m["page"], {}).setdefault(m["n"], m)
+                for pg, want in sorted(pages.items()):
                     prior = next((d["section"] for d, _ in reversed(rows) if d["page"] < pg), "")
-                    for q in read_page(doc[pg - 1], pg, total, exam, prior, model, base_url, key, only=[str(n) for n in sorted(nums)], paper_id=paper_id):
-                        n = as_int(q.get("number"))
-                        if n not in nums:
+                    for q in read_page(doc[pg - 1], pg, total, exam, prior, model, base_url, key, only=[str(n) for n in sorted(want)], paper_id=paper_id):
+                        w = want.get(as_int(question_number(q.get("number"))))
+                        if not w:
                             continue
                         q["continued"] = False
                         d = norm_question(q, 0, pg)
-                        d["section"] = d["section"] or prior
-                        cur = next((r for r in rows if as_int(r[0]["number"]) == n), None)
-                        if cur is None:
-                            rows.append((d, q.get("figure_box")))
-                        elif d["options"] and not cur[0]["options"]:
-                            rows[rows.index(cur)] = (d, q.get("figure_box") or cur[1])
-            rows.sort(key=lambda r: as_int(r[0]["number"]))
+                        d["section"] = d["section"] or w["section"] or prior
+                        place(rows, w["run"], w["n"], d, q.get("figure_box"))
+                merge_duplicates(rows)
+            # Printed order, never sorted by number: sorting mixed up papers whose sections each start again at 1.
             for pos, (d, _) in enumerate(rows):
                 d["position"] = pos
-            missing, lost = needs_reread(rows)
+            twice = merge_duplicates(rows)
+            missing, lost, _, jumps = numbering(rows)
             # Only now, with every page read, does the earlier attempt get replaced. A failure above keeps it.
             for q in db.query(Question).filter(Question.paper_id == paper_id).all():
                 db.delete(q)
             db.flush()
-            images = embedded_images(doc)
+            images, drawn = embedded_images(doc), {}
             for data, box in rows:
+                boxes = {o["key"]: o.pop("_box") for o in data["options"] if "_box" in o}
                 q = Question(paper_id=paper_id, **data); db.add(q); db.flush()
                 if isinstance(box, list) and len(box) == 4:
-                    try:
-                        box = snap([float(v) for v in box], images.get(data["page"], []))
-                        pg = doc[data["page"] - 1]; r = pg.rect
-                        clip = pymupdf.Rect(box[0] * r.width, box[1] * r.height, box[2] * r.width, box[3] * r.height) & r
-                        if clip.width > 8 and clip.height > 8:
-                            q.figure_key = f"papers/{p.book_id}/figures/{paper_id}_{q.id}.png"
-                            store.put(q.figure_key, pg.get_pixmap(dpi=200, clip=clip).tobytes("png"))
-                    except (TypeError, ValueError):
-                        pass
+                    png = crop(doc, data["page"], box, images, drawn)
+                    if png:
+                        q.figure_key = f"papers/{p.book_id}/figures/{paper_id}_{q.id}.png"
+                        store.put(q.figure_key, png)
+                if boxes:
+                    opts = []
+                    for o in data["options"]:
+                        o = dict(o)
+                        png = crop(doc, data["page"], boxes[o["key"]], images, drawn) if o["key"] in boxes else None
+                        if png:
+                            o["figure"] = f"papers/{p.book_id}/figures/{paper_id}_{q.id}_{o['key']}.png"
+                            store.put(o["figure"], png)
+                        opts.append(o)
+                    q.options = opts
+        def named(ms):
+            return ", ".join(f"{m['n']}" + (f" ({m['section']})" if m["section"] else "") for m in ms)
         warn = []
         if missing:
-            warn.append("Still missing after checking again: question " + ", ".join(map(str, missing)) + ". Add them by hand.")
+            warn.append("Still missing after checking again: question " + named(missing) + ". Add them by hand.")
         if lost:
-            warn.append("No options found for question " + ", ".join(map(str, lost)) + ". Check them against the original.")
+            warn.append("No options found for question " + named(lost) + ". Check them against the original.")
+        for sec, a, b in jumps:
+            warn.append(f"Numbering jumps from {a} to {b}{' in ' + sec if sec else ''}. One of these numbers may be misread; check it against the original.")
+        warn += twice
         progress(db, p, ai_status="done", ai_stage="Read", ai_done=total, ai_total=total, ai_error=" ".join(warn))
     except Exception as e:
         db.rollback(); p = db.get(QuestionPaper, paper_id)
@@ -250,14 +439,25 @@ def read(paper_id: int):
         db.close()
 
 
-def ask_answer(q, exam, model, base_url, key, figure):
-    """One model request. Runs on a worker thread, so it touches no database objects."""
-    opts = "Options:\n" + "\n".join(f"({o['key']}) {o['text']}" for o in q["options"]) if q["options"] else ""
+def ask_answer(q, exam, model, base_url, key, figure, option_figures=None):
+    """One model request. Runs on a worker thread, so it touches no database objects.
+    figure is the question's picture; option_figures maps an option key to that option's picture."""
+    images, n = [], 0
+    if figure:
+        images.append(data_url(figure)); n = 1
+    lines = []
+    for o in q["options"]:
+        pic = (option_figures or {}).get(o["key"])
+        if pic:
+            images.append(data_url(pic)); n += 1
+        lines.append(f"({o['key']}) {o['text']}" + (f" [the picture in image {n}]" if pic else ""))
+    opts = "Options:\n" + "\n".join(lines) if lines else ""
+    text = q["text"] + ("\n(The question's figure is image 1.)" if figure and option_figures else "")
     fmt = {"mcq": "the single option letter", "multi": "the correct option letters separated by commas",
            "numeric": "the final number only"}.get(q["qtype"], "a short final answer")
     usage = {}
-    r = openai_json(model, ANSWER_PROMPT.format(exam=exam, section=f" ({q['section']})" if q["section"] else "", text=q["text"], options=opts, format=fmt),
-                    [data_url(figure)] if figure else [], base_url=base_url, api_key=key, timeout=600, usage=usage)
+    r = openai_json(model, ANSWER_PROMPT.format(exam=exam, section=f" ({q['section']})" if q["section"] else "", text=text, options=opts, format=fmt),
+                    images, base_url=base_url, api_key=key, timeout=600, usage=usage)
     return r, usage
 
 
@@ -274,7 +474,8 @@ def answers(paper_id: int):
         store, failed, done = get_storage(), 0, 0
         with ThreadPoolExecutor(max_workers=6) as pool:
             jobs = {pool.submit(ask_answer, {"options": q.options or [], "qtype": q.qtype, "section": q.section, "text": q.text}, exam, model, base_url, key,
-                                store.get(q.figure_key) if q.figure_key else None): q for q in todo}
+                                store.get(q.figure_key) if q.figure_key else None,
+                                {o["key"]: store.get(o["figure"]) for o in q.options or [] if o.get("figure")}): q for q in todo}
             for job in as_completed(jobs):
                 q = jobs[job]
                 try:

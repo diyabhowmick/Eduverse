@@ -37,7 +37,8 @@ export function QuestionCard({ q, reveal: start = false, pick, picked, result, p
         const on = chosen.includes(o.key), right = show && answers.includes(o.key), wrong = result && on && !right
         return <button key={o.key} type="button" className="btn ghost sm" disabled={!pick || !!result} onClick={() => pick?.(o.key)}
           style={{ justifyContent: 'flex-start', textAlign: 'left', border: '1px solid ' + (right ? 'var(--ok, #1a7f37)' : wrong ? 'var(--red)' : on ? 'var(--ink)' : 'var(--line-2)'), fontWeight: on ? 700 : 400 }}>
-          ({o.key})&nbsp;<MathText text={o.text} /></button>
+          ({o.key})&nbsp;<span style={{ minWidth: 0 }}><MathText text={o.text} />
+            {o.has_figure && <AuthImg src={`/api/exams/questions/${q.id}/options/${o.key}/figure`} alt={'Option ' + o.key} style={{ display: 'block', maxHeight: 160, marginTop: o.text ? 4 : 0 }} />}</span></button>
       })}</div>}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0 0 38px', flexWrap: 'wrap' }}>
         {q.chapter && (q.chapter_ref?.book_id ? <Link className="tag" to={'/student/read/' + q.chapter_ref.book_id}>{q.chapter}</Link> : <span className="tag">{q.chapter}</span>)}
