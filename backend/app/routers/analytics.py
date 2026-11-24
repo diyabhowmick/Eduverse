@@ -67,6 +67,13 @@ def dashboard(db: Session = Depends(get_db), _=Depends(super_admin)):
     }
 
 
+@router.get("/audit/verify")
+def audit_verify(db: Session = Depends(get_db), _=Depends(super_admin)):
+    """Checks that no audit entry was edited or deleted since it was written."""
+    from ..audit import verify
+    return verify(db)
+
+
 @router.get("/audit")
 def audit(q: str = "", action: str = "", limit: int = 200, db: Session = Depends(get_db), _=Depends(super_admin)):
     query = db.query(AuditLog)

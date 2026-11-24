@@ -1,3 +1,4 @@
+import { NotSure } from './common'
 // A chapter test: Eddie gets the student ready, then one question at a time, then the result.
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -14,7 +15,7 @@ const mmss = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 export default function ChapterTest() {
   const { bid, ch } = useParams(); const [sp] = useSearchParams(); const nav = useNavigate()
   const [t, setT] = useState(null); const [err, setErr] = useState('')
-  const [i, setI] = useState(0); const [ans, setAns] = useState({}); const [go, setGo] = useState(false)
+  const [i, setI] = useState(0); const [ans, setAns] = useState({}); const [go, setGo] = useState(false); const [unsure, setUnsure] = useState([])
   const [secs, setSecs] = useState(0); const [busy, setBusy] = useState(false); const [talking, setTalking] = useState(false)
   const started = useRef(false)
   const level = sp.get('level') || 'quick', retry = sp.get('retry')
@@ -49,7 +50,7 @@ export default function ChapterTest() {
   }
   async function finish() {
     setBusy(true); hush()
-    try { const r = await api(`/api/student/tests/${t.id}/submit`, { method: 'POST', body: { answers: ans, seconds: secs } }); nav('/student/result/' + r.id, { replace: true }) }
+    try { const r = await api(`/api/student/tests/${t.id}/submit`, { method: 'POST', body: { answers: ans, seconds: secs, unsure } }); nav('/student/result/' + r.id, { replace: true }) }
     catch (e) { setErr(e.message); setBusy(false) }
   }
   const answered = Object.values(ans).filter(v => String(v).trim()).length
@@ -85,6 +86,7 @@ export default function ChapterTest() {
           <button key={o.key} type="button" className={'ct-opt' + (ans[q.id] === o.key ? ' on' : '')} onClick={() => set(o.key)} aria-pressed={ans[q.id] === o.key}>
             <span className="ct-key">{o.key.toUpperCase()}</span><span>{o.text}</span></button>)}</div>
           : <input className="input ct-fill" placeholder="Type your answer" value={ans[q.id] || ''} onChange={e => set(e.target.value)} onKeyDown={e => e.key === 'Enter' && i < n - 1 && setI(i + 1)} autoFocus />}
+        <NotSure on={unsure.includes(q.id)} onChange={v => setUnsure(u => v ? [...u, q.id] : u.filter(x => x !== q.id))} />
       </div>
       <div className="ct-nav">
         <button className="btn" disabled={i === 0} onClick={() => setI(i - 1)}><Icon n="left" s={16} />Back</button>

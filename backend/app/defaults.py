@@ -21,6 +21,16 @@ AI = {
         "curiosity": "Explain the why and real world uses.",
         "research": "First principles, history and links to higher classes.",
     },
+    # Explanations written once and served from storage. The model is only asked when nothing saved fits.
+    "prestore": {
+        "level2": True,              # writing ahead also picks the hard words inside each level 1 answer and explains them once per book
+        "terms_per_explanation": 4,  # most level 2 words picked from one level 1 answer
+        "auto_on_live": True,        # publishing a textbook with nothing written yet starts writing ahead
+        "require_approval": True,    # a textbook cannot go live until a reviewer has approved its level 1 and level 2 explanations
+        "match_high": 0.6,           # a student's own question this close to something saved is answered from it, with no model call
+        "match_low": 0.28,           # between low and high, the model writes two or three lines that lead into the saved answer
+        "embeddings": "local",       # local (free, no model) | openai (text-embedding-3-small, uses the OpenAI key)
+    },
 }
 
 BRANDING = {

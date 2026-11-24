@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, num } from '../api'
-import { useLoad, Page, Field, useToast } from '../ui'
+import { useLoad, Page, Field, Switch, useToast } from '../ui'
 
 const PROV = [['ollama', 'Ollama', 'Runs on your own server'], ['anthropic', 'Claude', 'Anthropic API'], ['openai', 'OpenAI', 'OpenAI API']]
 const DEPTH = [['exam', 'Exam'], ['concept_clarity', 'Concept clarity'], ['curiosity', 'Curiosity'], ['research', 'Research']]
@@ -77,6 +77,19 @@ export default function AISettings() {
             </div>
           </div>
         </div>
+        {v.prestore && <div className="card">
+          <div className="card-h"><h3>Saved explanations</h3><span className="sub">Written once per book and served from storage, so most taps cost nothing</span></div>
+          <div className="card-b grid2">
+            <Field label="Write level 2 ahead" hint="The hard words inside each explanation, explained once per book"><Switch checked={!!v.prestore.level2} onChange={x => set('prestore', { ...v.prestore, level2: x })} label="Write level 2 ahead" /></Field>
+            <Field label="Write ahead on publish" hint="Publishing a textbook with nothing written yet starts writing its explanations"><Switch checked={!!v.prestore.auto_on_live} onChange={x => set('prestore', { ...v.prestore, auto_on_live: x })} label="Write ahead on publish" /></Field>
+            <Field label="Approve before publishing" hint="A textbook stays unpublished until every level 1 and level 2 explanation is approved"><Switch checked={!!v.prestore.require_approval} onChange={x => set('prestore', { ...v.prestore, require_approval: x })} label="Approve before publishing" /></Field>
+            <Field label="Level 2 words per explanation" hint="Most words picked from one explanation"><input className="input" type="number" min="1" max="8" value={v.prestore.terms_per_explanation} onChange={e => set('prestore', { ...v.prestore, terms_per_explanation: +e.target.value })} /></Field>
+            <Field label="Matching for typed questions" hint="Local is free. OpenAI also catches the same question in other words, at a tiny cost.">
+              <select className="input" value={v.prestore.embeddings} onChange={e => set('prestore', { ...v.prestore, embeddings: e.target.value })}><option value="local">Local, no model</option><option value="openai">OpenAI embeddings</option></select></Field>
+            <Field label="Answer from saved at" hint="0 to 1. A typed question this close to a saved answer gets it with no model call."><input className="input" type="number" min="0" max="1" step="0.02" value={v.prestore.match_high} onChange={e => set('prestore', { ...v.prestore, match_high: +e.target.value })} /></Field>
+            <Field label="Short bridge reply from" hint="Between this and the line above, the model writes two or three lines that lead into the saved answer."><input className="input" type="number" min="0" max="1" step="0.02" value={v.prestore.match_low} onChange={e => set('prestore', { ...v.prestore, match_low: +e.target.value })} /></Field>
+          </div>
+        </div>}
         <div className="card">
           <div className="card-h"><h3>Depth rules</h3><span className="sub">The student picks a purpose; the model follows its rule</span></div>
           <div className="card-b stack">{DEPTH.map(([k, l]) => (

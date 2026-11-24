@@ -108,3 +108,7 @@ class SignupIn(BaseModel):
     exam: str = ""
     university: str = ""
     course: str = ""
+    age_group: str = ""          # adult | minor ; a minor needs a parent or guardian's consent
+    guardian_name: str = ""
+    guardian_email: str = ""
+    consent: bool = False         # the learner (or their guardian, for a minor) agrees to the terms and privacy notice

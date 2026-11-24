@@ -1,10 +1,19 @@
 const KEY = 'ev_token'
 export const auth = {
   get token() { return localStorage.getItem(KEY) },
-  set(t, user) { localStorage.setItem(KEY, t); localStorage.setItem('ev_user', JSON.stringify(user)); localStorage.removeItem('ev_nick') },
+  set(t, user) { try { sessionStorage.setItem('ev_ck', '1') } catch { /* */ } localStorage.setItem(KEY, t); localStorage.setItem('ev_user', JSON.stringify(user)); localStorage.removeItem('ev_nick') },
   user() { try { return JSON.parse(localStorage.getItem('ev_user')) } catch { return null } },
-  clear() { localStorage.removeItem(KEY); localStorage.removeItem('ev_user'); localStorage.removeItem('ev_nick') },
+  clear() { localStorage.removeItem(KEY); localStorage.removeItem('ev_user'); localStorage.removeItem('ev_nick'); try { sessionStorage.removeItem('ev_ck') } catch { /* */ }
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {}) },
 }
+
+// Book images need the session cookie. A session from before the cookie existed gets one now, once per tab.
+try {
+  if (auth.token && !sessionStorage.getItem('ev_ck')) {
+    fetch('/api/auth/refresh', { method: 'POST', headers: { Authorization: 'Bearer ' + auth.token } })
+      .then(r => r.ok ? r.json() : null).then(d => { if (d?.token) { localStorage.setItem(KEY, d.token); sessionStorage.setItem('ev_ck', '1') } }).catch(() => {})
+  }
+} catch { /* private mode */ }
 
 export const LOGIN = { super_admin: '/login/superadmin', admin: '/login/admin', reviewer: '/login/reviewer', student: '/login/student', teacher: '/login/teacher' }
 

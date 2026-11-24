@@ -41,5 +41,13 @@ COPY --from=web /web/dist frontend/dist
 ENV STORAGE_DIR=/data/storage
 RUN mkdir -p /data/storage
 
+# Runs as an ordinary user, not root. The container starts as root only to hand a freshly mounted volume
+# (Railway, Docker) to that user, then drops to it before any app code runs.
+RUN useradd --create-home --uid 10001 eduverse && chown -R eduverse /app /data
+COPY scripts/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["sh", "/entrypoint.sh"]
+
 WORKDIR /app/backend
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
+# ROLE=api (default) serves the app; ROLE=worker runs queued background work only (book reading, explanations, papers).
+ENV ROLE=api
+CMD ["sh", "-c", "if [ \"$ROLE\" = worker ]; then exec python -m app.worker; else exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'; fi"]

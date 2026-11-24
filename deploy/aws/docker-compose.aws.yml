@@ -1,0 +1,63 @@
+# EduVerse on one EC2 box. Values come from /opt/eduverse/.env (written at first boot by Terraform's start script).
+# Secrets are not in that file: the app reads them from Secrets Manager (AWS_SECRET_ID) with the instance role.
+x-app: &app
+  image: ${IMAGE}
+  restart: unless-stopped
+  logging:
+    driver: awslogs
+    options:
+      awslogs-region: ${AWS_REGION}
+      awslogs-group: ${LOG_GROUP}
+      awslogs-create-group: "false"
+  depends_on: [redis]
+
+services:
+  caddy:          # HTTPS with a free Let's Encrypt certificate, renewed on its own
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment: { DOMAIN: "${DOMAIN}", ACME_EMAIL: "${ACME_EMAIL}" }
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+  api:
+    <<: *app
+    environment:
+      ROLE: api
+      EMBEDDED_WORKER: "0"
+      APP_ENV: production
+      AWS_REGION: ${AWS_REGION}
+      AWS_SECRET_ID: ${AWS_SECRET_ID}
+      DB_HOST: ${DB_HOST}
+      STORAGE_BACKEND: s3
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${AWS_REGION}
+      REDIS_URL: redis://redis:6379/0
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+  worker:
+    <<: *app
+    environment:
+      ROLE: worker
+      APP_ENV: production
+      AWS_REGION: ${AWS_REGION}
+      AWS_SECRET_ID: ${AWS_SECRET_ID}
+      DB_HOST: ${DB_HOST}
+      STORAGE_BACKEND: s3
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${AWS_REGION}
+      REDIS_URL: redis://redis:6379/0
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+
+volumes: { caddy_data: {}, caddy_config: {} }

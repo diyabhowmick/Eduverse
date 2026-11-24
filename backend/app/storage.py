@@ -30,6 +30,11 @@ class LocalStorage:
     def get(self, key: str) -> bytes:
         return (self.root / key).read_bytes()
 
+    def delete(self, key: str):
+        p = self.path(key)
+        if p.exists():
+            p.unlink()
+
     def path(self, key: str) -> Path:
         return self.root / key
 
@@ -50,6 +55,17 @@ class S3Storage:
 
     def get(self, key: str) -> bytes:
         return self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+
+    def delete(self, key: str):
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def signed_url(self, key: str, seconds: int = 900) -> str | None:
+        """A short-lived link straight to S3 (or the CDN in front of it), so images do not pass through the API."""
+        try:
+            self.s3.head_object(Bucket=self.bucket, Key=key)
+        except Exception:
+            return None
+        return self.s3.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=seconds)
 
 
 def get_storage():

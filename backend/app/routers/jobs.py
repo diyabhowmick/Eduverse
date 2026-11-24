@@ -260,21 +260,32 @@ def supervise(job_id: int):
 
 
 def start(job_id: int):
-    threading.Thread(target=supervise, args=(job_id,), daemon=True).start()
+    from ..tasks import enqueue
+    enqueue("m1", job_id)
 
 
 def resume_unfinished():
-    """On startup: jobs cut off by a restart are queued and run again."""
+    """On startup: unfinished work that has no task in the queue (cut off before the queue existed) is queued again.
+    Work that already has a task is left to the queue, which retries it if its worker died, so a second API copy
+    starting up never restarts a book another worker is reading."""
+    from ..models import Task, PrepJob, QuestionPaper
+    from ..tasks import enqueue
     db = SessionLocal()
     try:
-        ids = [j.id for j in db.query(Job).filter(Job.status.in_(("queued", "running")))]
-        for j in db.query(Job).filter(Job.id.in_(ids)):
-            j.status, j.pages_done = "queued", 0
+        open_keys = {k for (k,) in db.query(Task.key).filter(Task.status.in_(("queued", "running")))}
+        for j in db.query(Job).filter(Job.status.in_(("queued", "running"))):
+            if f"m1:{j.id}" not in open_keys:
+                j.status, j.pages_done = "queued", 0
+                enqueue("m1", j.id, db=db)
+        for p in db.query(PrepJob).filter(PrepJob.status.in_(("queued", "running"))):
+            if f"prep:{p.id}" not in open_keys:
+                enqueue("prep", p.id, db=db)
+        for q in db.query(QuestionPaper).filter(QuestionPaper.ai_status.in_(("queued", "running"))):
+            if not any(k.startswith(f"paper_ai:{q.id}:") for k in open_keys):
+                q.ai_status, q.ai_error = "failed", "Stopped by a restart. Start it again."
         db.commit()
     finally:
         db.close()
-    for jid in ids:
-        start(jid)
 
 
 @router.get("")
@@ -436,6 +447,10 @@ async def _create_job(db: Session, me, src: Path, filename: str, *, title, subje
         raise HTTPException(422, "The price cannot be negative")
     if not src.exists() or src.stat().st_size == 0:
         raise HTTPException(422, "The file is empty")
+    from .. import hardening as H
+    with open(src, "rb") as f:
+        head = f.read(4096)
+    H.check_upload(filename, head, src.stat().st_size, tuple(ALLOWED), whole=src)
     if book_id:
         book = db.get(Book, book_id)
         if not book:

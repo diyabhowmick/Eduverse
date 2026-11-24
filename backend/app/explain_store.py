@@ -97,7 +97,22 @@ def check(text: str) -> str:
     return t[:6000]
 
 
+import os as _os, threading as _th
+# At most this many model requests at once from one API copy. The rest wait briefly, then get a clear "busy"
+# instead of piling up and holding every server thread while a slow model answers.
+_SLOTS = _th.BoundedSemaphore(int(_os.getenv("AI_CONCURRENCY", "8")))
+
+
 def generate(db, prompt: str, *, kind: str, user_id=None, book_id=None, term="", where="") -> tuple[str, str]:
+    if not _SLOTS.acquire(timeout=float(_os.getenv("AI_WAIT_SECONDS", "20"))):
+        raise HTTPException(503, "Lots of students are asking right now. Try again in a few seconds.")
+    try:
+        return _generate(db, prompt, kind=kind, user_id=user_id, book_id=book_id, term=term, where=where)
+    finally:
+        _SLOTS.release()
+
+
+def _generate(db, prompt: str, *, kind: str, user_id=None, book_id=None, term="", where="") -> tuple[str, str]:
     left = budget_left(db)
     if left is not None and left <= 0:
         raise HTTPException(503, "This month's AI budget is used up. Saved explanations still work; new ones return next month.")
@@ -112,7 +127,7 @@ def generate(db, prompt: str, *, kind: str, user_id=None, book_id=None, term="",
     else:
         from .llm_client import call
         try:
-            text = call(provider, pv["model"], prompt, base_url=pv.get("base_url"), api_key=pv.get("api_key") or None, timeout=180, usage=usage)
+            text = call(provider, pv["model"], prompt, base_url=pv.get("base_url"), api_key=pv.get("api_key") or None, timeout=int(_os.getenv("AI_TIMEOUT", "90")), usage=usage)
         except Exception as e:
             import logging
             logging.getLogger("eduverse.ai").warning("AI %s did not answer for %s: %s", provider, term, str(e)[:300])
@@ -161,3 +176,76 @@ The student is studying "{root.term}" and has read this explanation:
 Their question: "{doubt[:400]}"
 Answer it clearly in under 150 words, consistent with the explanation above.
 Write short plain paragraphs with no markdown headings. Write any maths as LaTeX between $ signs."""
+
+
+# ---------------- written once, served from storage ----------------
+def pconf(db_or_ai) -> dict:
+    ai = db_or_ai if isinstance(db_or_ai, dict) else ai_conf(db_or_ai)
+    return {**AI["prestore"], **(ai.get("prestore") or {})}
+
+
+def l2_anchor(book, term: str) -> str:
+    """One level 2 explanation per word per book version, shared by every level 1 answer that uses the word."""
+    from . import content as C
+    return f"l2:{book.id}:{C.reader_key(book)}:{norm(term)}"
+
+
+def ask(ai: dict, prompt: str, *, json_mode=False, timeout=240, max_tokens=1200, usage=None) -> str:
+    """One model request with the configured provider. "mock" answers without a model, for tests."""
+    import os, json as _json
+    provider = os.getenv("AI_PROVIDER_OVERRIDE") or ai["provider"]
+    pv = ai["providers"].get(provider, {"model": "test"})
+    if provider == "mock":
+        if usage is not None:
+            usage.update(prompt=len(prompt) // 4, completion=60)
+        if json_mode:
+            words = re.findall(r"[A-Za-z]{7,}", prompt.split('"""')[1] if '"""' in prompt else prompt)
+            seen = []
+            for w in words:
+                if w.lower() not in [s.lower() for s in seen]:
+                    seen.append(w)
+            return _json.dumps({"terms": [{"term": w, "bridge": f"Here {w} is what the explanation leans on."} for w in seen[:3]]})
+        return "[Test model, not a real answer] A short saved explanation would appear here, written once and shared."
+    from .llm_client import call
+    return call(provider, pv["model"], prompt, base_url=pv.get("base_url"), api_key=pv.get("api_key") or None, timeout=timeout,
+                json_mode=json_mode, usage=usage, max_tokens=max_tokens)
+
+
+def parse_json(text: str) -> dict:
+    import json as _json
+    t = (text or "").strip()
+    t = re.sub(r"^```(?:json)?|```$", "", t, flags=re.M).strip()
+    try:
+        return _json.loads(t)
+    except Exception:
+        m = re.search(r"\{.*\}", t, re.S)
+        return _json.loads(m.group(0)) if m else {}
+
+
+def mark_prompt(e: Explanation, who: str, n: int) -> str:
+    return f"""You are helping {who}. They tapped "{e.term}" and were given this explanation:
+\"\"\"{e.text[:3000]}\"\"\"
+Pick at most {n} words or short phrases INSIDE this explanation that such a student may not know and would want explained.
+Copy each exactly as it appears in the text. Skip "{e.term}" itself, everyday words and anything the explanation already explains.
+For each, write one short sentence (under 25 words) that links that word back to "{e.term}" in this explanation.
+Answer only with JSON: {{"terms": [{{"term": "...", "bridge": "..."}}]}}"""
+
+
+def core_prompt(book, term: str, uses: list[str], who: str, style: str, ai: dict) -> str:
+    rule = (ai.get("depth_rules") or AI["depth_rules"]).get(style, "")
+    seen = "\n".join(f"- {u[:300]}" for u in uses[:3])
+    return f"""You are EduVerse, a patient tutor for {who} reading {book.title or 'their textbook'}.
+Explain "{term}" simply, in under 120 words, so it makes sense wherever it appears in this book.
+It came up while explaining:
+{seen}
+Style: {rule}
+Do not repeat those explanations. Write short plain paragraphs with no markdown headings. Write any maths as LaTeX between $ signs."""
+
+
+def bridge_prompt(target: Explanation, doubt: str, who: str) -> str:
+    return f"""You are EduVerse, a patient tutor for {who}.
+A saved explanation of "{target.term}" will be shown to the student right after your reply:
+\"\"\"{target.text[:2500]}\"\"\"
+The student wrote: "{doubt[:400]}"
+Reply in two or three short sentences only. If they have something wrong, say kindly what is off. Then lead them into the explanation
+below, for example "Here is how it works:". Do not re-explain the topic yourself. No markdown. Write any maths as LaTeX between $ signs."""

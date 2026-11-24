@@ -7,7 +7,7 @@ import LoginStory, { LoginCopy, Brandmark } from '../LoginStory'
 // Individual learners (B2C) create their own account. What they pick here opens the store on their shelf.
 export default function Signup() {
   const { data: tx } = useLoad('/api/taxonomy')
-  const [v, setV] = useState({ name: '', email: '', phone: '', password: '', track: 'textbook', level: 'school', board: '', grade: '', exam: '', university: '', course: '' })
+  const [v, setV] = useState({ name: '', email: '', phone: '', password: '', track: 'textbook', level: 'school', board: '', grade: '', exam: '', university: '', course: '', age_group: '', guardian_name: '', guardian_email: '', consent: false })
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const nav = useNavigate(); const narrow = useNarrow(900)
   const set = k => e => setV(x => ({ ...x, [k]: e.target.value }))
   const levels = v.track === 'exam' ? ['school', 'degree', 'competitive'] : ['school', 'degree']
@@ -46,6 +46,15 @@ export default function Signup() {
             <div className="field"><label>University</label><input className="input" value={v.university} onChange={set('university')} /></div>
             <div className="field"><label>Course</label><input className="input" placeholder="B.Sc Physics" value={v.course} onChange={set('course')} /></div></div>}
           {v.track === 'exam' && <div className="field"><label>Exam</label>{sel('exam', tx?.exams[v.level] || [], 'Pick your exam')}</div>}
+          <div className="field"><label>Your age</label><div className="seg">
+            <button type="button" className={v.age_group === 'adult' ? 'on' : ''} onClick={() => setV(x => ({ ...x, age_group: 'adult' }))}>18 or older</button>
+            <button type="button" className={v.age_group === 'minor' ? 'on' : ''} onClick={() => setV(x => ({ ...x, age_group: 'minor' }))}>Under 18</button></div></div>
+          {v.age_group === 'minor' && <div className="note" style={{ display: 'grid', gap: 8 }}><b style={{ fontSize: 13 }}>A parent or guardian needs to agree</b>
+            <div className="grid2"><div className="field"><label>Parent or guardian's name</label><input className="input" value={v.guardian_name} onChange={set('guardian_name')} required /></div>
+              <div className="field"><label>Their email</label><input className="input" type="email" value={v.guardian_email} onChange={set('guardian_email')} required /></div></div></div>}
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13.5, lineHeight: 1.5 }}>
+            <input type="checkbox" checked={v.consent} onChange={e => setV(x => ({ ...x, consent: e.target.checked }))} style={{ marginTop: 3 }} required />
+            <span>{v.age_group === 'minor' ? 'As the parent or guardian, I agree to the terms and the privacy notice and to EduVerse keeping this learner\'s study data.' : 'I agree to the terms and the privacy notice.'}</span></label>
           <button className="btn primary" disabled={busy} style={{ justifyContent: 'center', padding: '11px' }}>{busy ? 'Creating account' : 'Create account'}</button>
           <span style={{ fontSize: 14 }}>Already have an account? <Link to="/login/student" style={{ color: 'var(--red)', fontWeight: 650 }}>Sign in</Link></span>
         </form>

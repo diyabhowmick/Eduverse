@@ -203,3 +203,80 @@ Verified against a real PostgreSQL 16 carrying exactly those three legacy
 columns: the insert failed with their error, and after the fix the same upload
 succeeded. `id`, `title`, `status` and `pages` stayed `NOT NULL`; a second
 start printed nothing further.
+
+## Explanations written once, served from storage (v40, 23 Nov)
+
+Students get the same explanations, but the model is asked once per book instead of once per student.
+
+**Writing ahead** (AI usage, Write ahead, or automatically when a textbook goes live):
+1. Level 1 for every highlighted word, as before.
+2. One request per level 1 answer picks up to 4 hard words inside it, each with one line tying it back.
+3. Each of those words is explained once for the whole book (`l2:` anchor), shared by every level 1 answer that uses it.
+
+**Serving a tap:** a database read. The reader streams the saved text in a few words at a time so it feels live.
+Level 2 words are underlined in the explanation. A word nobody prepared, and anything at level 3, is written
+once and saved, so the next student gets it free. A reviewer sees these under Explanations, Written live.
+
+**A typed question** is matched to what is saved before any model call:
+
+| Match | What happens | Model |
+|---|---|---|
+| Same as an earlier student's question | that reply again | none |
+| Close to another saved explanation | that explanation | none |
+| Partly close | two or three lines on what is off, leading into the saved explanation | ~100 tokens |
+| Nothing close | a full answer | as before |
+
+Every reply the model writes is kept with the student's words. Matching is local and free by default (hashed
+words, no model); OpenAI embeddings can be switched on in AI settings to also catch the same question in other words.
+
+**New:** tables `explain_links`, `misconceptions`, `explain_vecs`; column `explanations.marked` (all added on start).
+`explain_match.py`. AI settings, Saved explanations card. Explanations page for reviewers and Super Admin
+(levels, written live, reported, student questions; edit, approve, retire, underline or remove a word).
+
+**Approval before publishing (v41):** a textbook cannot go live, from the reviewer's Publish or Super Admin's Go live,
+until every level 1 and level 2 explanation is approved and nothing reported is open. If nothing has been written
+yet, publishing starts writing them and says so. Explanations page shows "To approve" per book and has
+**Approve all** per tab. Both switches (write ahead on publish, approve before publishing) are in AI settings.
+
+## Interface pass (v42, 23 Nov)
+
+- **Reader:** the explanation opens as a drawer that slides in from the right (desktop) and closes with X; a bottom sheet on phones. The first highlighted word pulses until a student taps one.
+- **One word style:** red dotted underline with a soft marker, the same in the book and inside explanations, light, dark and night.
+- **Path chips:** density › particles as numbered chips; tap one to go back.
+- **Ask Eddie:** typed questions are a chat under each explanation (bubbles, typing dots, saved answers stream in).
+- **Student home:** "Continue reading" row, bigger book cards with a progress ring.
+- **Reviewer Explanations:** list on the left; the book's own paragraph (or the sentence that leads to a level 2 word) beside the explanation, word highlighted. Keys: J K move, A approve and next, E edit, R retire.
+- **Motion:** page fade and rise, staggered cards, press feedback, hover lift. All off under reduced motion. New file `motion.css`.
+
+## 3D store and books (v43, 23 Nov)
+
+- **Store, step 1, Choose your universe:** a card per school board (yours first), exam and university, with counts, class range and subjects. Cards lift and fan their books on hover; the card grows into its page (View Transitions, plain fade where not supported).
+- **Step 2, the shelf:** class picker with a sliding red pill; books stand on a ledge and slide in from the side you moved towards. Exams switch with chips.
+- **Step 3, the book up close:** large 3D book that turns slowly; "Turn it over" shows the chapter list on the back (years of papers for exam packs); "Open the book" swings the cover open, fans three pages and goes into the reader.
+- **Book3D** (`Book3D.jsx`, `books3d.css`): real cover, spine, page edges and back in CSS 3D, leans towards the pointer with a moving sheen, red bookmark showing progress. Covers are drawn per subject (atoms, grid, map, letters, hexagons, waves, cell, code) when no cover image is uploaded. Board names only, no board logos.
+- **Exam packs** are paper stacks with year tabs that fan out on hover.
+- **Home and My books** use the same 3D books. Phones with little memory and reduced motion get flat covers.
+- **New API:** `GET /api/student/store/segments`, `GET /api/student/store/books/{id}`.
+
+## Security trunk (v44, 24 Nov)
+
+See **SECURITY.md**. Book images now need a signed-in owner; shared replies need approval or three askers; login limits and lockout;
+sessions end on password reset; API keys encrypted at rest; upload checks; security headers; hash-chained audit log; consent for
+under 18s with data download and deletion request; durable task queue with a worker role; S3 signed image links; Docker Compose
+for one box; non-root container. 27 security checks pass, plus the explanation and approval checks from v40 and v41.
+
+## Study space: Notebook, Revise, Mistake book (v45, 24 Nov)
+
+Built on the v44 security trunk. Everything is private to the learner and included in "Download my data".
+
+- **Notebook** (new tab): notes, four-colour highlights, voice notes (up to 3 minutes, with a transcript when an OpenAI key is saved; never uses the learner's credits) and saved explanations. Search across all of it, filter by book or #tag, "Go to page", "Make a card".
+- **Reader:** selecting words gives Explain, Note, Highlight and Voice. Highlights are painted into the book and notes get a margin marker. The side panel has four tabs: Explain, Notes, Saved, Mistakes. Every explanation has a Save star.
+- **Not sure** on chapter tests, quick checks, Daily 5, mock tests and practice.
+- **Mistake book:** every wrong or "not sure" answer from any test, practice or past paper, with your answer, the right one and the solution. Try again in place; it clears itself after two right answers on different days.
+- **Revise** (new tab): today's cards (mistakes, not sure, saved explanations, words you opened three times or marked not helpful, notes you turned into cards), a 3D flip card rated Again, Hard, Good, Easy (keys 1 to 4), spaced 1, 3, 7, 14, 30, 60 days; revision streak; weak topics with a five-question Quick fix.
+- **Home and menu:** "N cards to revise today" card and a count on the Revise tab.
+- **New API** under `/api/student/study`; new tables `notes`, `saved_explanations`, `mistakes`, `topic_stats`, `review_cards`, `review_days` (created on start). Voice transcription runs on the task queue.
+
+## AWS ready (v46, 24 Nov)
+
+`deploy/aws/`: Terraform (VPC, EC2 with Docker Compose, RDS PostgreSQL 16 single-AZ with 7-day backups and point-in-time restore, private versioned S3, ECR, Secrets Manager, CloudWatch logs and alarms, Route 53, SSM instead of SSH), Caddy for HTTPS, and Windows scripts: `bootstrap.ps1`, `apply.ps1`, `deploy.ps1` (build, push, start, roll back if not ready), `backup-now.ps1`. The app reads its secrets from Secrets Manager (`AWS_SECRET_ID`), builds the RDS address from `DB_HOST`, and has `/api/ready`. See DEPLOY_AWS.md.

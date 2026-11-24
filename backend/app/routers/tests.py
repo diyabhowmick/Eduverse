@@ -240,6 +240,7 @@ def start(bid: int, ch: int, body: StartIn, db: Session = Depends(get_db), me=De
 class SubmitIn(BaseModel):
     answers: dict[str, str] = {}
     seconds: int = 0
+    unsure: list[int] = []      # questions the learner marked "not sure"
 
 
 def result(db, a: ChapterAttempt) -> dict:
@@ -275,9 +276,12 @@ def submit(aid: int, body: SubmitIn, db: Session = Depends(get_db), me=Depends(s
     a.answers = {str(k): str(v)[:200] for k, v in body.answers.items() if int(k) in qs}
     a.wrong = [qid for qid in a.question_ids if qid in qs and not T.is_right(qs[qid], a.answers.get(str(qid), ""))]
     a.score = len(a.question_ids) - len(a.wrong)
+    from .. import study as S
+    origin = {"quick": "Quick check", "daily": "Daily 5"}.get(a.level, "Chapter test")
     for qid in a.question_ids:
         if qid in qs:
             M.remember(db, me.id, qs[qid], a.answers.get(str(qid), ""), qid not in a.wrong)
+            S.record(db, me.id, "chapter", qs[qid], a.answers.get(str(qid), ""), qid not in a.wrong, origin=origin, not_sure=qid in body.unsure)
     a.seconds = max(0, min(body.seconds, 6 * 3600))
     a.finished_at = datetime.utcnow()
     from .student import day_row

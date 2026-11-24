@@ -46,7 +46,10 @@ const Signup = lazy(() => import('./pages/Signup'))
 const ExamPapers = lazy(() => import('./pages/ExamPapers'))
 const RPapers = lazy(() => import('./pages/reviewer/Papers'))
 const RTests = lazy(() => import('./pages/reviewer/Tests'))
+const RExplain = lazy(() => import('./pages/reviewer/Explanations'))
 const RTestBooks = lazy(() => import('./pages/reviewer/Tests').then(m => ({ default: m.TestBooks })))
+const SNotebook = lazy(() => import('./pages/student/Notebook'))
+const SRevise = lazy(() => import('./pages/student/Revise'))
 const STest = lazy(() => import('./pages/student/ChapterTest'))
 const SResult = lazy(() => import('./pages/student/TestResult'))
 
@@ -54,7 +57,7 @@ const SA_NAV = [
   ['', 'home', 'Overview'], ['add', 'upload', 'Add content'],
   ['__group', 'Content'], ['catalogue', 'book', 'Catalogue'], ['issues', 'shield', 'Flags and issues'], ['processing', 'job', 'Processing'], ['extraction', 'scan', 'Book reading (M1)'], ['figures', 'image', 'Figure redraw (M2)'],
   ['__group', 'People'], ['schools', 'school', 'Organisations'], ['requests', 'inbox', 'Organisation requests'], ['admins', 'admins', 'Admins'], ['reviewers', 'shield', 'Reviewers'],
-  ['__group', 'Business'], ['pricing', 'price', 'Pricing'], ['analytics', 'chart', 'Analytics'], ['usage', 'target', 'AI usage'],
+  ['__group', 'Business'], ['pricing', 'price', 'Pricing'], ['analytics', 'chart', 'Analytics'], ['usage', 'target', 'AI usage'], ['explanations', 'book', 'Explanations'],
   ['__group', 'Settings'], ['ai', 'ai', 'AI settings'], ['platform', 'settings', 'Platform settings'], ['audit', 'audit', 'Audit log'],
 ]
 const AD_NAV = [
@@ -74,7 +77,7 @@ function SuperShell() {
             require("reviewer", "super_admin"), so no new endpoint is involved;
             the page hides its review actions unless the book is in review. */}
         <Route path="books/:id" element={<RWorkspace />} />
-        <Route path="processing" element={<Processing />} /><Route path="ai" element={<AISettings />} /><Route path="usage" element={<AiUsage />} /><Route path="extraction" element={<M1Settings />} /><Route path="figures" element={<M2Settings />} /><Route path="analytics" element={<Analytics />} />
+        <Route path="processing" element={<Processing />} /><Route path="ai" element={<AISettings />} /><Route path="usage" element={<AiUsage />} /><Route path="explanations" element={<RExplain />} /><Route path="extraction" element={<M1Settings />} /><Route path="figures" element={<M2Settings />} /><Route path="analytics" element={<Analytics />} />
         <Route path="platform" element={<Platform />} /><Route path="audit" element={<Audit />} />
       </Routes>
     </Layout>
@@ -97,14 +100,14 @@ function AdminShell() {
   )
 }
 
-const RV_NAV = [['', 'inbox', 'Review queue'], ['tests', 'check', 'Chapter tests'], ['papers', 'job', 'Question papers'], ['history', 'audit', 'Reviewed books']]
+const RV_NAV = [['', 'inbox', 'Review queue'], ['explanations', 'book', 'Explanations'], ['tests', 'check', 'Chapter tests'], ['papers', 'job', 'Question papers'], ['history', 'audit', 'Reviewed books']]
 
 function ReviewerShell() {
   const [n, setN] = useState(0); const loc = useLocation()
   useEffect(() => { api('/api/review/queue').then(q => setN(q.filter(b => b.status === 'in_review' && b.has_content).length)).catch(() => {}) }, [loc.pathname])
   return (
     <Layout nav={RV_NAV} base="/review" role="Reviewer" loginPath="/login/reviewer" counts={{ '': n }}>
-      <Routes><Route index element={<RQueue />} /><Route path="papers" element={<RPapers />} /><Route path="history" element={<RHistory />} /><Route path="books/:id" element={<RWorkspace />} /><Route path="tests" element={<RTestBooks />} /><Route path="tests/:id" element={<RTests />} /></Routes>
+      <Routes><Route index element={<RQueue />} /><Route path="papers" element={<RPapers />} /><Route path="history" element={<RHistory />} /><Route path="books/:id" element={<RWorkspace />} /><Route path="tests" element={<RTestBooks />} /><Route path="tests/:id" element={<RTests />} /><Route path="explanations" element={<RExplain />} /></Routes>
     </Layout>
   )
 }
@@ -120,13 +123,14 @@ function TeacherShell() {
   )
 }
 
-const ST_NAV = [['', 'home', 'Home'], ['books', 'book', 'My books'], ['progress', 'chart', 'Progress'], ['store', 'price', 'Store']]
+const ST_NAV = [['', 'home', 'Home'], ['books', 'book', 'My books'], ['notebook', 'note', 'Notebook'], ['revise', 'repeat', 'Revise'], ['progress', 'chart', 'Progress'], ['store', 'price', 'Store']]
 
 function StudentShell() {
-  const u = auth.user(); const loc = useLocation()
+  const u = auth.user(); const loc = useLocation(); const [due, setDue] = useState(0)
+  useEffect(() => { api('/api/student/study/due').then(r => setDue(r.due)).catch(() => {}) }, [loc.pathname])
   return (
-    <Layout nav={ST_NAV} base="/student" role={u?.school || 'Learner'} loginPath="/login/student" collapse={loc.pathname.includes('/read/')}>
-      <Routes><Route index element={<SHome />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /><Route path="test/:bid/:ch" element={<STest />} /><Route path="result/:aid" element={<SResult />} /></Routes>
+    <Layout nav={ST_NAV} base="/student" role={u?.school || 'Learner'} loginPath="/login/student" collapse={loc.pathname.includes('/read/')} counts={{ revise: due }}>
+      <Routes><Route index element={<SHome />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="notebook" element={<SNotebook />} /><Route path="revise" element={<SRevise />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /><Route path="test/:bid/:ch" element={<STest />} /><Route path="result/:aid" element={<SResult />} /></Routes>
     </Layout>
   )
 }

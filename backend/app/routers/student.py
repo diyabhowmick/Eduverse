@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..models import User, Book, ClassBook, Purchase, StudentProgress, StudentDay, UsageEvent, Setting, School
+from ..models import User, Book, QuestionPaper, ClassBook, Purchase, StudentProgress, StudentDay, UsageEvent, Setting, School
 from ..security import require
 from ..audit import log
 from ..defaults import FEATURES, AI
@@ -119,7 +119,8 @@ def _tests_home(db, me, mine, prog):
     from .tests import daily_status
     from .. import memory as M
     mem = M.summary(db, me.id)
-    return {"daily": daily_status(db, me), "memory": {**mem, "for_eddie": M.for_eddie(mem)}, "test_next": nxt, "last_test": {"id": last.id, "score": last.score, "total": last.total, "chapter": last.chapter, "book_id": last.book_id,
+    from .study import summary as _rev
+    return {"revise": _rev(db, me.id), "daily": daily_status(db, me), "memory": {**mem, "for_eddie": M.for_eddie(mem)}, "test_next": nxt, "last_test": {"id": last.id, "score": last.score, "total": last.total, "chapter": last.chapter, "book_id": last.book_id,
                                             "untaught": len([q for q in (last.wrong or []) if q not in (last.taught or [])])} if last else None}
 
 
@@ -199,6 +200,85 @@ def store(track: str = "textbook", level: str = "", board: str = "", grade: str 
     return {"track": track, "levels": vals(Book.level, base), "boards": vals(Book.board), "grades": grades, "exams": vals(Book.exam),
             "universities": vals(Book.university),
             "books": [book_card(b, how=ids.get(b.id)) for b in q.order_by(Book.level, Book.board, Book.grade, Book.subject).all()]}
+
+
+@router.get("/store/segments")
+def store_segments(db: Session = Depends(get_db), me=Depends(student)):
+    """The store's first screen: every board, exam and university that has something on its shelf, with counts."""
+    if not feature(db, "student_store"):
+        raise HTTPException(403, "The store is turned off")
+    from sqlalchemy import or_
+    from collections import defaultdict
+    rows = db.query(Book).filter(or_(C.serving_filter(), Book.status == "upcoming")).all()
+    boards, exams, unis = defaultdict(lambda: {"books": 0, "grades": set(), "subjects": set(), "upcoming": 0}), defaultdict(lambda: {"packs": 0, "level": ""}), defaultdict(int)
+    for b in rows:
+        track, level = b.track or "textbook", b.level or "school"
+        if track == "exam":
+            if feature(db, "exam_track") and b.exam:
+                exams[b.exam]["packs"] += 1; exams[b.exam]["level"] = level
+        elif level == "degree" and b.university:
+            unis[b.university] += 1
+        elif b.board:
+            g = boards[b.board]
+            g["books"] += 1; g["upcoming"] += b.status == "upcoming"
+            if b.grade: g["grades"].add(b.grade)
+            if b.subject: g["subjects"].add(b.subject)
+    key = lambda g: (not g.isdigit(), int(g) if g.isdigit() else 0, g)
+    return {"boards": [{"board": k, "books": v["books"], "upcoming": v["upcoming"], "grades": sorted(v["grades"], key=key), "subjects": sorted(v["subjects"])[:6]}
+                       for k, v in sorted(boards.items(), key=lambda kv: -kv[1]["books"])],
+            "exams": [{"exam": k, **v} for k, v in sorted(exams.items(), key=lambda kv: -kv[1]["packs"])],
+            "universities": [{"university": k, "books": n} for k, n in sorted(unis.items(), key=lambda kv: -kv[1])]}
+
+
+@router.get("/store/books/{bid}")
+def store_book(bid: int, db: Session = Depends(get_db), me=Depends(student)):
+    """What the back of a book shows: its chapters, or for an exam pack the years of papers inside."""
+    b = db.get(Book, bid)
+    if not b or not (C.serving(b) or b.status == "upcoming"):
+        raise HTTPException(404, "Book not found")
+    out = book_card(b, how=owned_ids(db, me).get(b.id))
+    out["pages"] = b.pages
+    if (b.track or "textbook") == "exam":
+        papers = db.query(QuestionPaper).filter(QuestionPaper.book_id == b.id, QuestionPaper.status == "approved").order_by(QuestionPaper.year.desc()).all()
+        out["years"] = sorted({p.year for p in papers if p.year}, reverse=True)
+        out["papers"] = len(papers)
+    else:
+        try:
+            chs = C.load(b, C.reader_key(b)).get("chapters", []) if C.reader_key(b) else []
+        except Exception:
+            chs = []
+        out["chapters"] = [{"number": c.get("number"), "title": c.get("title", "")} for c in chs][:40]
+    return out
+
+
+# ---------------- the learner's own data: a copy on request, and a way to ask for it to be deleted ----------------
+@router.get("/me/data")
+def my_data(db: Session = Depends(get_db), me=Depends(student)):
+    """Everything EduVerse holds about this learner, as one file they can keep."""
+    from ..models import ExplanationVote, StudentDay, Note, SavedExplanation, Mistake
+    log(db, me, "student.data_export", "user", me.id); db.commit()
+    return {"account": {"name": me.name, "email": me.email, "phone": me.phone, "created_at": me.created_at, "last_login": me.last_login,
+                        "organisation": me.school.name if me.school else "", "profile": me.profile or {}},
+            "purchases": [{"book_id": p.book_id, "price": p.price, "status": p.status, "at": p.created_at} for p in db.query(Purchase).filter(Purchase.user_id == me.id)],
+            "progress": [{"book_id": p.book_id, "percent": p.percent, "minutes": p.minutes, "last_read": p.last_read} for p in db.query(StudentProgress).filter(StudentProgress.user_id == me.id)],
+            "study_days": [{"day": d.day, "minutes": round((d.seconds or 0) / 60), "explanations": d.explanations} for d in db.query(StudentDay).filter(StudentDay.user_id == me.id)],
+            "votes": [{"explanation_id": v.explanation_id, "value": v.value, "at": v.at} for v in db.query(ExplanationVote).filter(ExplanationVote.user_id == me.id)],
+            "notes": [{"kind": n.kind, "book_id": n.book_id, "chapter": n.chapter, "quote": n.quote, "body": n.body, "tags": n.tags, "transcript": n.transcript,
+                       "voice_note": bool(n.audio_key), "at": n.created_at} for n in db.query(Note).filter(Note.user_id == me.id)],
+            "saved_explanations": [{"explanation_id": x.explanation_id, "path": x.path, "at": x.created_at} for x in db.query(SavedExplanation).filter(SavedExplanation.user_id == me.id)],
+            "mistakes": [{"question": f"{m.qsource}:{m.question_id}", "topic": m.topic, "my_answer": m.my_answer, "wrong": m.wrong_count, "not_sure": m.not_sure,
+                          "status": m.status} for m in db.query(Mistake).filter(Mistake.user_id == me.id)]}
+
+
+@router.post("/me/delete-request")
+def delete_request(db: Session = Depends(get_db), me=Depends(student)):
+    """Records the request. The Super Admin completes it from the audit log; an organisation's student is
+    handled with their organisation, which owns that account."""
+    prof = dict(me.profile or {}); prof["deletion_requested_at"] = datetime.utcnow().isoformat(timespec="seconds")
+    me.profile = prof
+    log(db, me, "student.delete_request", "user", me.id, organisation=me.school.name if me.school else "")
+    db.commit()
+    return {"ok": True, "message": "Your request is recorded. Your account and data will be deleted within 30 days, and you will get an email when it is done."}
 
 
 class ProfileIn(BaseModel):

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../api'
-import { useLoad, Page, Ring, Icon, Sheet, Field, useToast, plural } from '../../ui'
-import { BookTile, Cover } from './common'
+import { useLoad, Page, Ring, Icon, Sheet, Field, useToast, plural, ask } from '../../ui'
+import { BookTile, Cover, ContinueRow } from './common'
+import Book3D from '../../Book3D'
+import '../../study.css'
 import EddieBuddy from '../../EddieBuddy'
 import { callName } from '../../callname'
 
@@ -29,6 +31,11 @@ function GoalSheet({ d, onClose, onSaved }) {
     <Field label="What should Eddie call you?" hint="Leave empty to use your first name"><input className="input" value={nick} maxLength={30} onChange={e => setNick(e.target.value)} placeholder={d.me.name.split(' ')[0]} /></Field>
     <Field label="Minutes of study a day"><div className="chips">{[10, 20, 30, 45, 60, 90].map(m => <button key={m} type="button" className={'chip' + (+goal === m ? ' on' : '')} onClick={() => setGoal(m)}>{m} min</button>)}</div></Field>
     <Field label="Exam date (optional)" hint="Home shows a countdown"><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
+    <Field label="Your data" hint="A copy of everything EduVerse keeps about you, or a request to delete your account">
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" className="btn sm" onClick={async () => { try { const d = await api('/api/student/me/data'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })); a.download = 'my-eduverse-data.json'; a.click() } catch (e) { setErr(e.message) } }}>Download my data</button>
+        <button type="button" className="btn ghost sm" onClick={async () => { if (!(await ask('Ask EduVerse to delete your account and all your study data?', { yes: 'Ask to delete', danger: true }))) return; try { const r = await api('/api/student/me/delete-request', { method: 'POST' }); setErr(r.message) } catch (e) { setErr(e.message) } }}>Delete my account</button>
+      </div></Field>
   </Sheet>
 }
 
@@ -40,6 +47,7 @@ export default function Home() {
   const left = daysTo(d.exam_date)
   const running = openTest()
   const c = d.continue, x = d.last_exam
+  const hasRow = d.books.some(b => b.track !== 'exam' && b.readable && b.owned && b.progress > 0 && b.progress < 100)
   const weekMin = d.week.reduce((a, w) => a + w.minutes, 0); const max = Math.max(10, ...d.week.map(w => w.minutes))
   return (
     <div className="page">
@@ -49,19 +57,23 @@ export default function Home() {
           : <button type="button" className="countdown" onClick={() => setGoalOpen(true)}><Icon n="clock" s={16} />Set your exam date</button>}
       </div>
       <div className="stack">
+        <ContinueRow books={d.books} />
+        {d.revise?.due > 0 && <Link className="rv-home" to="/student/revise"><span className="rv-home-ic"><Icon n="repeat" s={20} /></span>
+          <div><b>{d.revise.due === 1 ? '1 card' : d.revise.due + ' cards'} to revise today</b><div className="muted">Mistakes, answers you were not sure about and saved explanations. About {Math.max(2, Math.round(Math.min(d.revise.due, 20) * 1.3))} minutes.</div></div>
+          <span className="btn primary">Revise now</span></Link>}
         <EddieBuddy d={d} running={running} onGoal={() => setGoalOpen(true)} onNamed={reload} />
         {d.rules.exam_mode && <div className="note" style={{ borderLeft: '3px solid var(--red)' }}><b>{d.rules.exam_mode}</b> is on for your class. Explanations are short and exam focused until it ends.</div>}
 
         {running ? <Link className="hero" to={`/student/exam/${running.bid}?tab=tests`}><div className="hero-body"><div className="k">Test in progress</div><h2>{running.title}</h2>
             <div className="muted">{Object.keys(running.answers || {}).length} of {running.questions.length} answered. Your answers are saved on this device.</div></div>
             <span className="btn primary lg inline"><Icon n="play" s={16} />Resume test</span></Link>
-          : c ? <Link className="hero" to={'/student/read/' + c.id}><Cover b={c} size="sm" /><div className="hero-body"><div className="k">Continue reading</div><h2>{c.title}</h2>
+          : c && !hasRow ? <Link className="hero" to={'/student/read/' + c.id}><Book3D b={c} size="sm" /><div className="hero-body"><div className="k">Continue reading</div><h2>{c.title}</h2>
             <div className="bar-track" style={{ maxWidth: 360 }}><i style={{ width: c.progress + '%' }} /></div><div className="muted" style={{ fontSize: 13, marginTop: 6 }}>{c.progress}% read</div></div>
             <span className="btn primary lg inline">Continue</span></Link>
           : x ? <Link className="hero" to={`/student/exam/${x.id}?tab=practice`}><div className="hero-body"><div className="k">Keep practising</div><h2>{x.title}</h2>
             <div className="muted">{x.practised ? `${plural(x.practised, 'question')} practised so far. Pick up where you left off.` : 'Start with a few questions. Every answer shows you the solution.'}</div></div>
             <span className="btn primary lg inline">{x.practised ? 'Continue' : 'Start practising'}</span></Link>
-          : <Link className="hero" to={d.store_on ? '/student/store' : '/student/books'}><div className="hero-body"><div className="k">Start here</div><h2>Find your textbooks and exam packs</h2>
+          : hasRow ? null : <Link className="hero" to={d.store_on ? '/student/store' : '/student/books'}><div className="hero-body"><div className="k">Start here</div><h2>Find your textbooks and exam packs</h2>
             <div className="muted">Pick your board and class, or the exam you are preparing for.</div></div><span className="btn primary lg inline">Browse</span></Link>}
 
         <div className="today">
@@ -78,9 +90,9 @@ export default function Home() {
         {weekMin > 0 && <div className="card"><div className="card-h"><h3>This week</h3><span className="sub">{weekMin} minutes</span></div><div className="card-b"><div className="weekbars">{d.week.map(w => <div key={w.day} title={`${w.minutes} min`}><i style={{ height: (w.minutes / max * 70 + 2) + 'px' }} /><span>{new Date(w.day).toLocaleDateString('en-IN', { weekday: 'short' })}</span></div>)}</div></div></div>}
 
         <div><div className="section-h"><h3>My books and exam packs</h3>{d.store_on && <Link className="btn sm" to="/student/store">Browse the store</Link>}</div>
-          <div className="tiles">{d.books.map(b => <BookTile key={b.id} b={b} />)}</div>
+          <div className="tiles-3d">{d.books.map(b => <BookTile key={b.id} b={b} />)}</div>
           {!d.books.length && <div className="card empty">{d.me.individual ? 'Nothing yet. Pick your textbooks or an exam pack from the store.' : 'No books yet. Your school or college assigns books to your class, or get one from the store.'}</div>}</div>
-        {d.upcoming.length > 0 && <div><div className="section-h"><h3>Coming soon for your class</h3></div><div className="tiles">{d.upcoming.map(b => <BookTile key={b.id} b={b} action={<span className="tag" style={{ marginTop: 8 }}>Coming soon</span>} />)}</div></div>}
+        {d.upcoming.length > 0 && <div><div className="section-h"><h3>Coming soon for your class</h3></div><div className="tiles-3d">{d.upcoming.map(b => <BookTile key={b.id} b={b} action={<span className="tag" style={{ marginTop: 8 }}>Coming soon</span>} />)}</div></div>}
       </div>
       {goalOpen && <GoalSheet d={d} onClose={() => setGoalOpen(false)} onSaved={() => { setGoalOpen(false); toast('Saved'); reload() }} />}
     </div>

@@ -5,4 +5,5 @@ import App from './App'
 import './styles.css'
 import './polish.css'
 import './ux.css'
+import './motion.css'
 createRoot(document.getElementById('root')).render(<BrowserRouter><App /></BrowserRouter>)

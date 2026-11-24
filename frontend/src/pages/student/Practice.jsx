@@ -1,3 +1,4 @@
+import { NotSure } from './common'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { useLoad, MathText, AuthImg, Icon, useToast } from '../../ui'
@@ -27,18 +28,18 @@ export default function Practice({ id, styles, initial = {} }) {
   const [f, setF] = useState({ show: initial.show || 'all', subject: '', chapter: initial.chapter || '', year: 0 })
   const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString()
   const { data, reload, setData } = useLoad(`/api/student/exams/${id}/practice?${qs}`, [qs])
-  const [i, setI] = useState(0); const [given, setGiven] = useState(''); const [res, setRes] = useState(null); const [explain, setExplain] = useState(false)
+  const [i, setI] = useState(0); const [given, setGiven] = useState(''); const [unsure, setUnsure] = useState(false); const [res, setRes] = useState(null); const [explain, setExplain] = useState(false)
   const toast = useToast()
   useEffect(() => { setI(0) }, [qs])
   const q = data?.questions[i]
-  useEffect(() => { setGiven(''); setRes(null); setExplain(false); window.scrollTo({ top: 0, behavior: 'smooth' }) }, [q?.id])
+  useEffect(() => { setGiven(''); setRes(null); setExplain(false); setUnsure(false); window.scrollTo({ top: 0, behavior: 'smooth' }) }, [q?.id])
   const set = (k, v) => setF(x => ({ ...x, [k]: v }))
   const checkable = q && (q.options?.length || q.qtype === 'numeric')
 
   async function check() {
     if (!given.trim()) return
     try {
-      const r = await api(`/api/student/exams/${id}/practice/${q.id}/answer`, { method: 'POST', body: { given } })
+      const r = await api(`/api/student/exams/${id}/practice/${q.id}/answer`, { method: 'POST', body: { given, not_sure: unsure } })
       setRes(r); setData(d => ({ ...d, questions: d.questions.map(x => x.id === q.id ? { ...x, answer: r.answer, solution: r.solution, state: r.state } : x) }))
     } catch (e) { toast(e.message, true) }
   }
@@ -89,6 +90,7 @@ export default function Practice({ id, styles, initial = {} }) {
         <button type="button" className="btn lg inline" disabled={i === 0} onClick={() => setI(i - 1)} aria-label="Previous question"><Icon n="left" s={18} /></button>
         <span className="grow" />
         {!res && !checkable && <button type="button" className="btn lg" onClick={reveal}>Show answer</button>}
+        {!res && checkable && <NotSure on={unsure} onChange={setUnsure} />}
         {!res && checkable && <button type="button" className="btn primary lg" disabled={!given.trim()} onClick={check}>Check answer</button>}
         {res && <button type="button" className="btn primary lg" onClick={next}>Next question<Icon n="right" s={18} /></button>}
       </div>

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User, School
 from ..schemas import AdminIn, AdminPatch
-from ..security import super_admin, hash_pw
+from ..security import super_admin, hash_pw, end_sessions
 from ..audit import log
 
 router = APIRouter(prefix="/api/admins", tags=["admins"])
@@ -62,6 +62,7 @@ def reset_password(uid: int, db: Session = Depends(get_db), me=Depends(super_adm
         raise HTTPException(404, "Admin not found")
     pw = secrets.token_urlsafe(9)
     u.password_hash = hash_pw(pw)
+    end_sessions(u)
     log(db, me, "admin.reset_password", "user", uid)
     db.commit()
     return {"temp_password": pw}

@@ -91,6 +91,11 @@ def make_paper(db, pack: Book, me, year: int, session: str, title: str, text: st
         name = Path(name).name
         if not data:
             raise HTTPException(422, "The file is empty")
+        from .. import hardening as H
+        H.check_upload(name, data[:4096], len(data), (".pdf", ".docx", ".txt"))
+        if name.lower().endswith(".pdf"):
+            if H._PDF_ACTIVE.search(data):
+                raise HTTPException(422, "This PDF contains scripts or embedded programs, so it was refused. Print it to a new PDF and upload that.")
         try:
             text = P.read_text_safe(name, data)
         except Exception as e:
@@ -262,7 +267,8 @@ def start_ai(db, p: QuestionPaper, action: str, me):
     p.ai_status, p.ai_stage, p.ai_done, p.ai_total, p.ai_error = "queued", "Starting", 0, 0, ""
     log(db, me, "paper." + action, "paper", p.id)
     db.commit()
-    threading.Thread(target=supervise_ai, args=(p.id, "read" if action == "read_ai" else "answers"), daemon=True).start()
+    from ..tasks import enqueue
+    enqueue("paper_ai", p.id, "read" if action == "read_ai" else "answers")
     return paper_out(p)
 
 
@@ -599,6 +605,7 @@ class SubmitIn(BaseModel):
     answers: dict[str, str] = {}
     times: dict[str, int] = {}
     time_taken: int = 0
+    unsure: list[int] = []
 
 
 @srouter.post("/mock/{aid}/submit")
@@ -630,6 +637,9 @@ def submit_mock(aid: int, body: SubmitIn, db: Session = Depends(get_db), me=Depe
                 blank += 1
             if given:
                 note_progress(db, me, a.book_id, q, ok)
+            if given or qid in body.unsure:
+                from .. import study as S
+                S.record(db, me.id, "exam", q, given, ok if given else None, book_id=a.book_id, origin="Mock test", not_sure=qid in body.unsure)
         results.append({**q_out(q), "subject": subject_of(q.section), "given": given, "correct": (ok if given else False) if auto else None,
                         "self_check": not auto, "time": int(body.times.get(str(qid), 0))})
     a.answers, a.score, a.total, a.submitted_at = body.answers, score, total, datetime.utcnow()
@@ -668,6 +678,7 @@ def practice(bid: int, chapter: str = "", subject: str = "", year: int = 0, show
 
 class GivenIn(BaseModel):
     given: str = ""
+    not_sure: bool = False
 
 
 def pack_question(db, me, bid, qid) -> Question:
@@ -685,6 +696,9 @@ def practice_answer(bid: int, qid: int, body: GivenIn, db: Session = Depends(get
     given = body.given.strip().lower()
     ok = judge(q, given) if given else None
     p = note_progress(db, me, bid, q, ok)
+    if given:
+        from .. import study as S
+        S.record(db, me.id, "exam", q, given, ok, book_id=bid, origin="Practice", not_sure=body.not_sure)
     db.commit()
     return {"correct": ok, "answer": q.answer, "solution": q.solution, "state": {"status": p.status, "bookmarked": p.bookmarked, "tries": p.tries}}
 

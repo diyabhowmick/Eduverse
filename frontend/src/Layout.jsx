@@ -54,7 +54,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
           <div className="who"><span>{user?.email}</span><div className="avatar" title={user?.email}>{(user?.name || 'U')[0]}</div>
             <button className="btn ghost" onClick={signOut} title="Sign out" aria-label="Sign out"><Icon n="out" s={16} /></button></div>
         </header>
-        {children}
+        <div className="route-fx" key={loc.pathname}>{children}</div>
       </main>
       <nav className="tabbar" aria-label="Main">
         {tabs.map(([p, i, l]) => p === '__more'

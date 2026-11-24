@@ -10,7 +10,7 @@ from ..db import get_db
 from .. import content as C
 from ..models import (User, School, ClassRoom, ClassBook, Book, SchoolRequest, StudentProgress, UsageEvent,
                       AuditLog, Setting)
-from ..security import require, hash_pw
+from ..security import require, hash_pw, end_sessions
 from ..audit import log
 from ..defaults import FEATURES, AI
 
@@ -342,6 +342,7 @@ def reset_student(uid: int, db: Session = Depends(get_db), me=Depends(school_adm
     u = own_student(db, me, uid)
     pw = secrets.token_urlsafe(6)
     u.password_hash = hash_pw(pw)
+    end_sessions(u)
     log(db, me, "student.reset_password", "user", uid)
     db.commit()
     return {"email": u.email, "temp_password": pw}
@@ -404,7 +405,13 @@ async def upload_students(file: UploadFile = File(...), commit: bool = Form(Fals
     if not file.filename.lower().endswith((".csv", ".xlsx", ".xlsm")):
         raise HTTPException(422, "Upload a CSV or Excel (.xlsx) file")
     s = my_school(db, me)
-    rows = parse_rows(file.filename, await file.read())
+    data = await file.read()
+    from .. import hardening as H
+    if not file.filename.lower().endswith(".csv"):
+        H.check_upload(file.filename, data[:64], len(data), (".xlsx", ".xlsm"))
+    elif len(data) > 10 * 1048576:
+        raise HTTPException(413, "The file is larger than 10 MB")
+    rows = parse_rows(file.filename, data)
     classes = {(c.grade, c.section): c for c in db.query(ClassRoom).filter(ClassRoom.school_id == s.id)}
     existing = {e for (e,) in db.query(User.email)}
     seen, report = set(), []

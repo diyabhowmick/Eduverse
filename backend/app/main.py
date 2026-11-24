@@ -3,11 +3,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import Base, engine, SessionLocal
-from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn, tests, voice
+from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn, tests, voice, study
 from .seed import ensure_core
 from .content import ContentMissing
 
-app = FastAPI(title="EduVerse API", version="0.1.0")
+from . import hardening as H
+H.check_config()
+app = FastAPI(title="EduVerse API", version="0.2.0", docs_url=None if H.is_prod() else "/api/docs",
+              redoc_url=None, openapi_url=None if H.is_prod() else "/api/openapi.json")
+
+
+@app.middleware("http")
+async def _security(request, call_next):
+    # Very large JSON bodies are refused before they are read; file uploads have their own limits.
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > 2 * 1048576 and "multipart/form-data" not in request.headers.get("content-type", ""):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=413, content={"detail": "Request too large"})
+    return H.add_headers(request, await call_next(request))
 
 
 # A book whose converted file is missing from storage used to surface as a bare
@@ -59,6 +72,7 @@ app.include_router(learn.router)
 app.include_router(tests.router)
 app.include_router(tests.srouter)
 app.include_router(voice.router)
+app.include_router(study.router)
 
 
 @app.get("/api/taxonomy")
@@ -144,12 +158,44 @@ def startup():
     relax_legacy_columns()
     with SessionLocal() as db:
         ensure_core(db)
+        # Keys saved before v44 were plain text; writing each setting back stores them encrypted.
+        from .models import Setting
+        from sqlalchemy.orm.attributes import flag_modified
+        for st in db.query(Setting):
+            st.value = dict(st.value or {}); flag_modified(st, "value")
+        db.commit()
     jobs.resume_unfinished()
+    from . import tasks
+    tasks.start_embedded()
 
 
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/ready")
+def ready():
+    """For the load balancer and the deploy script: the database answers and storage is reachable."""
+    from sqlalchemy import text
+    from fastapi.responses import JSONResponse
+    checks = {}
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = type(e).__name__
+    try:
+        from .storage import get_storage
+        st = get_storage()
+        if hasattr(st, "s3"):
+            st.s3.head_bucket(Bucket=st.bucket)
+        checks["storage"] = "ok"
+    except Exception as e:
+        checks["storage"] = type(e).__name__
+    good = all(v == "ok" for v in checks.values())
+    return JSONResponse(status_code=200 if good else 503, content={"ok": good, **checks, "version": app.version})
 
 
 dist = settings.frontend_dist

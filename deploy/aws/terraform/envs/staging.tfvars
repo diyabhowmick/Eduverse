@@ -1,0 +1,9 @@
+env               = "staging"
+domain            = "staging.eduverse.zprox.ai" # TBD: confirm the name
+route53_zone_id   = ""                          # TBD: the zprox.ai hosted zone id, or leave empty and add the A record yourself
+acme_email        = ""                          # TBD
+superadmin_email  = ""                          # TBD
+instance_type     = "t3.medium"
+db_instance_class = "db.t4g.micro"
+db_backup_days    = 3
+alarm_email       = ""

@@ -1,6 +1,6 @@
 """Reviewer API. A converted book waits here; only a reviewer's approval of every page publishes it."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Request, APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -438,6 +438,10 @@ def publish(bid: int, body: Decision, db: Session = Depends(get_db), me=Depends(
     missing = missing_pages(db, b)
     if missing:
         raise HTTPException(409, f"Pages {page_list(missing)} of the uploaded book are not in the digital book, so nobody has reviewed them. Send the book back so it can be converted again.")
+    from .learn import explain_gate
+    block = explain_gate(db, b, me)
+    if block:
+        raise HTTPException(409, block)
     b.status, b.live_at, b.live_key = "live", datetime.utcnow(), b.content_key
     b.reviewed_by, b.reviewed_at, b.review_note = me.email, datetime.utcnow(), body.comment.strip()
     log(db, me, "review.publish", "book", bid, title=b.title, pages=p["total"])
@@ -459,13 +463,45 @@ def send_back(bid: int, body: Decision, db: Session = Depends(get_db), me=Depend
 public = APIRouter(tags=["content"])
 
 
+def may_see_content(db, u, b) -> bool:
+    """Staff see every book. A student sees what they own. An organisation's admin or teacher sees what is assigned to its classes."""
+    if u.role in ("super_admin", "reviewer"):
+        return True
+    if u.role == "student":
+        from .student import owned_ids
+        return b.id in owned_ids(db, u)
+    if u.role in ("admin", "teacher") and u.school_id:
+        from ..models import ClassBook, ClassRoom
+        return db.query(ClassBook).join(ClassRoom, ClassBook.class_id == ClassRoom.id).filter(
+            ClassRoom.school_id == u.school_id, ClassBook.book_id == b.id).first() is not None
+    return False
+
+
 @public.get("/api/content/{bid}/{path:path}")
-def content_file(bid: int, path: str, db: Session = Depends(get_db)):
-    """Images of a converted book (figure crops and the M1 page images)."""
+def content_file(bid: int, path: str, request: Request, t: str = "", db: Session = Depends(get_db)):
+    """Images of a converted book (figure crops and the M1 page images). Paid content: the caller must be signed in
+    (session cookie or Authorization header) and allowed to see this book, or carry a signed link from the server."""
+    from .. import hardening as H
+    from ..security import user_from_token, COOKIE
     if not (path.startswith("images/") or path.startswith("flow_images/")) or ".." in path:
         raise HTTPException(404, "Not found")
     b = db.get(Book, bid)
     if not b or not b.content_key:
+        raise HTTPException(404, "Not found")
+    if not (t and H.content_ok(bid, t)):
+        auth = request.headers.get("authorization", "")
+        tok = auth[7:] if auth.lower().startswith("bearer ") else request.cookies.get(COOKIE, "")
+        if not tok:
+            raise HTTPException(401, "Sign in required")
+        if not may_see_content(db, user_from_token(tok, db), b):
+            raise HTTPException(403, "Get this book first")
+    store = C._store()
+    if hasattr(store, "signed_url"):      # S3: send the browser straight to a short-lived signed link
+        from fastapi.responses import RedirectResponse
+        for key in dict.fromkeys(k for k in (b.content_key, b.live_key) if k):
+            url = store.signed_url(f"{key}/{path}")
+            if url:
+                return RedirectResponse(url, status_code=302, headers={"Cache-Control": "private, max-age=600"})
         raise HTTPException(404, "Not found")
     data = None
     for key in dict.fromkeys(k for k in (b.content_key, b.live_key) if k):  # the version in review, then the live one
@@ -477,4 +513,4 @@ def content_file(bid: int, path: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Not found")
     ext = path.rsplit(".", 1)[-1].lower()
     return Response(data, media_type={"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml"}.get(ext, "application/octet-stream"),
-                    headers={"Cache-Control": "public, max-age=86400"})
+                    headers={"Cache-Control": "private, max-age=3600"})

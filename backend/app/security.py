@@ -23,19 +23,44 @@ def check_pw(pw: str, h: str) -> bool:
 
 def make_token(user: User) -> str:
     exp = datetime.utcnow() + timedelta(hours=settings.jwt_hours)
-    return jwt.encode({"sub": str(user.id), "role": user.role, "exp": exp}, settings.jwt_secret, algorithm="HS256")
+    return jwt.encode({"sub": str(user.id), "role": user.role, "tv": user.token_version or 0, "exp": exp, "iat": datetime.utcnow()},
+                      settings.jwt_secret, algorithm="HS256")
+
+
+def end_sessions(user: User):
+    """Every token issued before this stops working: password reset, suspension, removal."""
+    user.token_version = (user.token_version or 0) + 1
+
+
+COOKIE = "ev_session"
+
+
+def set_session_cookie(response, token: str, request=None):
+    """The same token as an HttpOnly cookie that only goes to book images, so a plain <img> can load them
+    while a script on the page can never read it."""
+    secure = bool(request and (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"))
+    response.set_cookie(COOKIE, token, max_age=settings.jwt_hours * 3600, httponly=True, samesite="strict", secure=secure, path="/api/content")
 
 
 def current_user(cred: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)) -> User:
     if not cred:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in required")
+    return user_from_token(cred.credentials, db)
+
+
+def user_from_token(token: str, db: Session) -> User:
     try:
-        data = jwt.decode(cred.credentials, settings.jwt_secret, algorithms=["HS256"])
+        data = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired, sign in again")
     user = db.get(User, int(data["sub"]))
     if not user or user.status != "active":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not active")
+    if data.get("tv", 0) != (user.token_version or 0) or data.get("role") != user.role:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session ended, sign in again")
+    if user.role in ("admin", "teacher") or (user.role == "student" and user.school_id):
+        if not user.school or user.school.status != "active":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your organisation's access is paused")
     return user
 
 

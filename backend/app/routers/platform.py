@@ -53,6 +53,8 @@ def get_setting(key: str, db: Session = Depends(get_db), _=Depends(super_admin))
         raise HTTPException(404, "Unknown setting")
     s = db.get(Setting, key)
     val = s.value if s else ALL[key]
+    if key == "ai":   # settings saved before a new section existed still show it, with its defaults
+        val = {**ALL["ai"], **val, "prestore": {**ALL["ai"]["prestore"], **(val.get("prestore") or {})}}
     return mask(val) if key == "ai" else val
 
 

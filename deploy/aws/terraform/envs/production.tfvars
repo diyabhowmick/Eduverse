@@ -1,0 +1,9 @@
+env               = "production"
+domain            = "eduverse.zprox.ai" # TBD: confirm the name
+route53_zone_id   = ""                  # TBD
+acme_email        = ""                  # TBD
+superadmin_email  = ""                  # TBD
+instance_type     = "t3.large"
+db_instance_class = "db.t4g.small"
+db_backup_days    = 7
+alarm_email       = ""                  # TBD

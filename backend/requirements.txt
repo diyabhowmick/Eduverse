@@ -18,3 +18,5 @@ lxml>=4.9
 latex2mathml>=3.76
 requests>=2.31
 opencv-python-headless>=4.8
+cryptography>=42
+redis>=5

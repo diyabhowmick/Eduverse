@@ -1,6 +1,21 @@
 from datetime import datetime
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey, JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class SealedJSON(TypeDecorator):
+    """JSON whose secret fields (api_key and the like) are encrypted in the database and plain in Python."""
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        from .hardening import walk, seal
+        return walk(value, seal) if value is not None else value
+
+    def process_result_value(self, value, dialect):
+        from .hardening import walk, unseal
+        return walk(value, unseal) if value is not None else value
 from .db import Base
 
 ROLES = ("super_admin", "admin", "reviewer", "student")
@@ -74,6 +89,9 @@ class User(Base):
     signup: Mapped[str] = mapped_column(String(20), default="")  # "" = created by an organisation | self = signed up on their own
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)   # raised to sign out every session (password reset, suspension)
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     school = relationship("School")
     klass = relationship("ClassRoom", foreign_keys=[class_id])
 
@@ -311,7 +329,7 @@ class ReviewPage(Base):
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
-    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    value: Mapped[dict] = mapped_column(SealedJSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
@@ -338,6 +356,24 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String(40))
     target_id: Mapped[str] = mapped_column(String(40), default="")
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    prev_hash: Mapped[str] = mapped_column(String(64), default="")    # each entry carries the hash of the one before,
+    hash: Mapped[str] = mapped_column(String(64), default="", index=True)  # so an edited or deleted entry breaks the chain
+
+
+class Task(Base):
+    """Durable background work. Survives restarts; any worker can pick it up; a dead worker's task is retried."""
+    __tablename__ = "tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(30), index=True)           # m1 | prep | paper_ai
+    args: Mapped[list] = mapped_column(JSON, default=list)
+    key: Mapped[str] = mapped_column(String(120), index=True)           # kind and args, so the same work is never queued twice
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)   # queued | running | done | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_by: Mapped[str] = mapped_column(String(80), default="")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Explanation(Base):
@@ -366,7 +402,50 @@ class Explanation(Base):
     retries: Mapped[int] = mapped_column(Integer, default=0)            # "Explain differently" pressed on it
     reports: Mapped[int] = mapped_column(Integer, default=0)
     decided_by: Mapped[str] = mapped_column(String(160), default="")    # "votes" or the reviewer who chose it
+    marked: Mapped[bool] = mapped_column(Boolean, default=False)         # its level 2 words have been picked out ahead of students
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ExplainLink(Base):
+    """A word inside a level 1 explanation that leads to a shared level 2 explanation.
+    The level 2 text is written once per book; bridge is the one line that ties it back to this explanation."""
+    __tablename__ = "explain_links"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("explanations.id"), index=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    term: Mapped[str] = mapped_column(String(200))
+    key: Mapped[str] = mapped_column(String(120), index=True)
+    bridge: Mapped[str] = mapped_column(Text, default="")
+
+
+class Misconception(Base):
+    """A student's own words and the reply they got, kept so the next student who says the same thing is answered from here.
+    explanation_id is the saved explanation the reply points into; empty when the reply was written in full."""
+    __tablename__ = "misconceptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    root_id: Mapped[int | None] = mapped_column(ForeignKey("explanations.id"), nullable=True, index=True)
+    explanation_id: Mapped[int | None] = mapped_column(ForeignKey("explanations.id"), nullable=True)
+    sample: Mapped[str] = mapped_column(Text)
+    reply: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(20), default="bridge")     # bridge | full
+    vec: Mapped[dict] = mapped_column(JSON, default=dict)
+    vec_model: Mapped[str] = mapped_column(String(60), default="")
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    askers: Mapped[list] = mapped_column(JSON, default=list)            # distinct students who asked this; shared with others only after 3, or once approved
+    status: Mapped[str] = mapped_column(String(20), default="candidate") # candidate | final | retired | held
+    model: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ExplainVec(Base):
+    """The matching vector of a saved explanation, worked out once."""
+    __tablename__ = "explain_vecs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    explanation_id: Mapped[int] = mapped_column(ForeignKey("explanations.id"), index=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(60), default="local")
+    vec: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ExplanationVote(Base):
@@ -470,3 +549,98 @@ class QuestionMemory(Base):
     last_answer: Mapped[str] = mapped_column(String(200), default="")
     last_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     fixed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------------- v45: the learner's own study space ----------------
+class Note(Base):
+    """A learner's note, highlight or voice note, tied to a spot in a book. Private to its owner."""
+    __tablename__ = "notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    chapter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section: Mapped[str] = mapped_column(String(80), default="")
+    block_id: Mapped[str] = mapped_column(String(80), default="")      # the paragraph or figure it belongs to
+    kind: Mapped[str] = mapped_column(String(12), default="note")      # note | highlight | voice
+    quote: Mapped[str] = mapped_column(Text, default="")               # the words selected in the book
+    body: Mapped[str] = mapped_column(Text, default="")
+    color: Mapped[str] = mapped_column(String(10), default="yellow")   # yellow | red | green | blue
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    audio_key: Mapped[str] = mapped_column(String(300), default="")
+    audio_type: Mapped[str] = mapped_column(String(40), default="")
+    audio_secs: Mapped[int] = mapped_column(Integer, default=0)
+    transcript: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class SavedExplanation(Base):
+    """An explanation the learner kept. Points to the stored explanation, so saving costs nothing."""
+    __tablename__ = "saved_explanations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    explanation_id: Mapped[int] = mapped_column(ForeignKey("explanations.id"), index=True)
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True, index=True)
+    chapter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    path: Mapped[list] = mapped_column(JSON, default=list)              # the words tapped to get here: ["density", "particles"]
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class Mistake(Base):
+    """One question the learner got wrong or was not sure about, from any test, practice or past paper.
+    It clears itself after two right answers on different days."""
+    __tablename__ = "mistakes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    qsource: Mapped[str] = mapped_column(String(10))                   # chapter (ChapterQuestion) | exam (Question)
+    question_id: Mapped[int] = mapped_column(Integer, index=True)
+    origin: Mapped[str] = mapped_column(String(20), default="")        # Chapter test | Quick check | Daily 5 | Practice | Mock test | Quick fix
+    book_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    chapter: Mapped[str] = mapped_column(String(200), default="")
+    topic: Mapped[str] = mapped_column(String(200), default="")
+    my_answer: Mapped[str] = mapped_column(String(300), default="")
+    wrong_count: Mapped[int] = mapped_column(Integer, default=0)
+    not_sure: Mapped[bool] = mapped_column(Boolean, default=False)
+    right_days: Mapped[list] = mapped_column(JSON, default=list)        # days answered right since it opened
+    status: Mapped[str] = mapped_column(String(10), default="open")    # open | cleared | dismissed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class TopicStat(Base):
+    """Right and wrong answers per topic, for the weak topics list."""
+    __tablename__ = "topic_stats"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    book_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    topic: Mapped[str] = mapped_column(String(200), primary_key=True)
+    chapter: Mapped[str] = mapped_column(String(200), default="")
+    qsource: Mapped[str] = mapped_column(String(10), default="chapter")
+    right: Mapped[int] = mapped_column(Integer, default=0)
+    tries: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ReviewCard(Base):
+    """A revision card. Comes back on a spaced schedule (1, 3, 7, 14, 30 days) until it is well known."""
+    __tablename__ = "review_cards"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))                      # mistake | saved | note | word
+    ref_id: Mapped[int] = mapped_column(Integer)
+    book_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    front: Mapped[str] = mapped_column(Text, default="")
+    back: Mapped[str] = mapped_column(Text, default="")
+    where: Mapped[str] = mapped_column(String(200), default="")
+    due: Mapped[str] = mapped_column(String(10), index=True)           # YYYY-MM-DD
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    reps: Mapped[int] = mapped_column(Integer, default=0)
+    lapses: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active | done
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ReviewDay(Base):
+    """Cards reviewed per day, for the revision streak."""
+    __tablename__ = "review_days"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    cards: Mapped[int] = mapped_column(Integer, default=0)

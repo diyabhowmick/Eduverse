@@ -3,7 +3,7 @@ import { api, num, when } from '../api'
 import { useLoad, Page, Modal, Field, Tag, LineChart, MathText, useToast } from '../ui'
 import { STYLE } from '../ExplainPanel'
 
-const KIND = { explain: 'New explanations', explain_deep: 'Level 3 and own questions', prepare: 'Written in advance', paper_read: 'Reading papers', paper_answers: 'Writing answers', recap: 'Chapter recaps' }
+const KIND = { explain: 'New explanations', explain_deep: 'Level 3 and own questions', prepare: 'Written in advance', doubt: 'Typed questions', paper_read: 'Reading papers', paper_answers: 'Writing answers', recap: 'Chapter recaps' }
 const money = (v, cur) => v == null ? '' : (cur === 'INR' ? '₹' : cur === 'USD' ? '$' : cur + ' ') + v.toFixed(v < 1 ? 4 : 2)
 
 function Prepare({ book, onClose, onStarted }) {
@@ -14,10 +14,11 @@ function Prepare({ book, onClose, onStarted }) {
   return <Modal title={'Write explanations ahead: ' + book.title} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button>
     <button className="btn primary" disabled={!est?.requests || over} onClick={go}>Start writing</button></>}>
     {err && <div className="err">{err}</div>}
-    <p style={{ marginTop: 0 }}>{book.track === 'exam' ? 'Every question in its approved papers' : 'Every highlighted word in the book'} gets a saved explanation, so students are served instantly and at no cost.</p>
+    <p style={{ marginTop: 0 }}>{book.track === 'exam' ? 'Every question in its approved papers' : 'Every highlighted word in the book, and the hard words inside each explanation,'} gets a saved explanation, so students are served instantly and at no cost.</p>
     <Field label="Styles to write">{Object.entries(STYLE).map(([k, l]) => <label key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}>
       <input type="checkbox" checked={styles.includes(k)} onChange={e => setStyles(s => e.target.checked ? [...s, k] : s.filter(x => x !== k))} />{l}</label>)}</Field>
-    {est && <div className="note">{est.note || <>About <b>{num(est.requests)}</b> requests and <b>{num(est.tokens)}</b> tokens with {est.model}.
+    {est && <div className="note">{est.note || <>About <b>{num(est.requests)}</b> requests and <b>{num(est.tokens)}</b> tokens with {est.model}
+      {est.marks ? <> ({num(est.level1)} level 1, {num(est.marks)} to pick level 2 words, about {num(est.level2)} level 2)</> : null}.
       {est.budget_left != null && <> This month's budget has {num(Math.max(0, est.budget_left))} tokens left.</>}{over && <b> Not enough budget left.</b>}</>}</div>}
   </Modal>
 }

@@ -1,3 +1,4 @@
+import { NotSure } from './common'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
@@ -88,7 +89,7 @@ function Runner({ test, onDone, onExit }) {
     setBusy(true)
     const times = spent(t)
     try {
-      const r = await api(`/api/student/exams/mock/${t.aid}/submit`, { method: 'POST', body: { answers: t.answers, times, time_taken: Math.round((Date.now() - t.started) / 1000) } })
+      const r = await api(`/api/student/exams/mock/${t.aid}/submit`, { method: 'POST', body: { answers: t.answers, unsure: t.unsure || [], times, time_taken: Math.round((Date.now() - t.started) / 1000) } })
       localStorage.removeItem(KEY(t.aid))
       if (auto) toast('Time is up. Your test was submitted.')
       onDone({ ...r, marked: t.marked })
@@ -132,7 +133,9 @@ function Runner({ test, onDone, onExit }) {
       {q.has_figure && <div style={{ margin: '12px 0' }}><AuthImg src={`/api/exams/questions/${q.id}/figure`} alt="Figure for this question" style={{ maxHeight: 320 }} /></div>}
       <Options q={q} value={t.answers[q.id]} onChange={answer} />
       {!q.options?.length && q.qtype !== 'numeric' && <div className="note">Written question: work it out on paper. It is not marked automatically; the solution is shown after you submit.</div>}
-      {t.answers[q.id] && <button type="button" className="btn ghost sm" onClick={() => answer('')}>Clear answer</button>}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <NotSure on={(t.unsure || []).includes(q.id)} onChange={v => setT(s => ({ ...s, unsure: v ? [...(s.unsure || []), q.id] : (s.unsure || []).filter(x => x !== q.id) }))} />
+        {t.answers[q.id] && <button type="button" className="btn ghost sm" onClick={() => answer('')}>Clear answer</button>}</div>
     </div>
     <aside className="test-side">{palette}</aside>
     <div className="test-bar">

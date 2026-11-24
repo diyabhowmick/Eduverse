@@ -1,4 +1,7 @@
 import { Link } from 'react-router-dom'
+import { Ring } from '../../ui'
+import Book3D, { PaperStack } from '../../Book3D'
+import '../../books3d.css'
 
 export const openPath = b => (b.track === 'exam' ? '/student/exam/' : '/student/read/') + b.id
 const levelLine = b => b.level === 'degree' ? [b.university, b.course, b.semester && 'Sem ' + b.semester].filter(Boolean).join(', ')
@@ -15,11 +18,30 @@ export function Cover({ b, size = 'md' }) {
 
 export function BookTile({ b, action }) {
   const exam = b.track === 'exam'
+  const go = b.readable && b.owned
   const inner = <>
-    <Cover b={b} />
-    <div className="tile-b"><b>{b.title}</b>{(exam ? (b.exam !== b.title && b.exam) : levelLine(b)) && <div className="muted">{exam ? b.exam : levelLine(b)}</div>}
-      {b.readable && b.owned && !exam && <><div className="bar-track" style={{ marginTop: 8 }}><i style={{ width: b.progress + '%' }} /></div><div className="muted" style={{ fontSize: 12 }}>{b.progress}% read</div></>}
-      {b.owned && !b.readable && <span className="tag warn" style={{ marginTop: 8 }}>Being prepared</span>}
+    {exam ? <PaperStack b={b} /> : <Book3D b={b} size="md" ribbon={go ? b.progress : null} />}
+    <div className="sx-cap"><b>{exam ? b.title : b.subject || b.title}</b>
+      <span className="muted">{exam ? b.exam : b.grade ? 'Class ' + b.grade + (b.medium && b.medium !== 'English' ? ' · ' + b.medium : '') : levelLine(b)}</span>
+      {go && !exam && <span className="muted">{b.progress ? b.progress + '% read' : 'Not started'}</span>}
+      {b.owned && !b.readable && <span className="tag warn" style={{ justifySelf: 'center' }}>Being prepared</span>}
       {action}</div></>
-  return b.readable && b.owned ? <Link className="tile" to={openPath(b)}>{inner}</Link> : <div className="tile">{inner}</div>
+  return go ? <Link className="t3" to={openPath(b)}>{inner}</Link> : <div className="t3">{inner}</div>
+}
+
+// "Continue reading": books already started, most read first, as a row that scrolls sideways on phones.
+export function ContinueRow({ books }) {
+  const list = books.filter(b => b.track !== 'exam' && b.readable && b.owned && b.progress > 0 && b.progress < 100).sort((a, b) => b.progress - a.progress).slice(0, 8)
+  if (!list.length) return null
+  return <div><div className="section-h"><h3>Continue reading</h3></div>
+    <div className="cont-row">{list.map(b => <Link key={b.id} className="cont-card" to={openPath(b)}>
+      <Book3D b={b} size="sm" />
+      <div className="cont-b"><b>{b.title}</b><div className="muted">{b.progress}% read</div><span className="cont-go">Continue</span></div>
+      <Ring value={b.progress} max={100} size={44} stroke={5}><span>{b.progress}%</span></Ring></Link>)}</div></div>
+}
+
+// "Not sure": flags an answer the learner guessed, so it comes back in Revise even when it was right.
+export function NotSure({ on, onChange }) {
+  return <button type="button" className={'notsure' + (on ? ' on' : '')} aria-pressed={!!on} onClick={() => onChange(!on)}>
+    <span className="ns-box">{on ? '?' : ''}</span>Not sure</button>
 }
