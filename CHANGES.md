@@ -1,3 +1,184 @@
+# v49 (25 Nov): capacity
+
+Load tested on PostgreSQL with 3,000 student accounts. As delivered, a 2 vCPU server took about 400 students reading at once
+and froze at about 600; fixed, about 600 a process and about 1,200 with the 2 processes now set by default. Full numbers in
+the capacity audit PDF.
+- **Freeze under load fixed.** Requests held a database connection while waiting for a thread; a burst of about 40 used every
+  connection and stopped the server for 30 seconds. API requests in progress are now capped at the number of connections, the
+  rest queue, and a request that waits over 20 s gets "busy, try again". `db.py`, `main.py`.
+- **2 web processes by default** (`WEB_CONCURRENCY`); only one runs background work. `Dockerfile`, `tasks.py`.
+- **Books kept in memory for a minute** for progress saves, Home and opening a book. `content.load_ro`.
+- **Compressed answers** over 1 KB.
+- **Sign-in limit per internet address raised to 600 per 10 minutes** (a school shares one address), and it reads the address
+  our own proxy adds, which a browser cannot fake. Per-account limits unchanged.
+- New settings: THREADS, DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT, QUEUE_WAIT_SECONDS, WEB_CONCURRENCY, LOGIN_PER_IP_10MIN.
+- `loadtest/`: the load test, to run against staging.
+
+# v48 (25 Nov): the book looks like the textbook
+
+## v51 - fixes from the review as each user
+
+Student
+- Chapter test questions without AI: never the same option twice; the meaning question asks which book sentence explains the word, and no other option mentions it, so there is one right answer.
+- New hard questions: one book sentence has a word swapped, the student spots the wrong one. Questions come only from statements, not from exercises, aims or activities.
+- Lists that print their own labels ("1.", "(a)") no longer get a second number; (a), (b) sit under their question.
+- The book's own Keywords list counts as important words.
+- Page view: running headers and footers are never marked as important words.
+- Eddie sits in the right margin, his hint never covers the text or the explanation panel.
+- Page view with the explanation open folds the topic list away so the page stays readable.
+- Last unit says the book is finished, not "On to the next one".
+- Home offers "Start reading" for a book the school gave, instead of "Find your textbooks".
+- Progress shows "None practised yet" instead of 0% right.
+- Social Science covers get their own art (they had the Science atom).
+- No empty "Introduction" topic; a chapter title no longer repeats "Chapter 2" under "Unit 2".
+- Demo data: only the book the sample fills is live, in English, with its real page count.
+
+Teacher
+- Class page shows each book: class average, who has not started, and each student's progress per book.
+
+School admin
+- Class cards list book titles, not just subjects.
+
+Reviewer
+- Tables have borders and a header row (the border colour was undefined).
+- Publishing says "0 of N" with the same N the writing job shows.
+- The original page is always the PDF page for a PDF upload (a failed render is retried); click it to zoom in.
+
+Super admin
+- Recent activity names the person, book or school instead of "user 1018"; unknown actions read as words.
+
+## v50 - human review of M1 and M2
+
+M1 (book reading) and the converter
+- Chemistry and units keep their small numbers: CO(NH2)2, (NH4)2SO4 and m2 now print as subscripts and superscripts.
+- (a), (b), (c) lists are read as lists, not merged into one paragraph with the text after them.
+- Printed boxes are kept: the converter now reads M1's box marks, so Activity, Do you know and side panels come out as boxes instead of being missed or left as a marker.
+- A shaded Keywords side panel stays text (it had become a picture) and is read after the text beside it, as a list.
+- Match the columns (A / B) comes out as a two column table, not loose lines.
+- Chapter titles keep the book's case ("and", not "And") and single spaces.
+- Page check problems now show as reviewer flags on the page (they were only written to the ledger). No false alarm for the chapter title or for subscripts.
+
+M2 (figures), round 2
+- When a figure is not redrawn (no image model, kind switched off, no description), the reviewer is still offered the no-AI cleaned copy, unless it would look the same as the print.
+- A redrawn picture keeps the printed figure's shape: it is padded, never stretched, so the page does not jump.
+- After a redraw, the new picture is read back and any printed label it lost or misspelled is listed for the reviewer.
+- A figure with no AI description but with a caption is described from its caption, so it is no longer flagged.
+- scripts/m2_redraw_check.py tests the redraw path with the image model mocked.
+
+M2 (figures)
+- No-AI clean up no longer changes colours: flat artwork is left exactly as printed (brown soil had turned red, green seeds black). Photos get brightness contrast and a yellowed-paper fix that keeps hues.
+
+## Page view
+The reader can now show the printed page exactly as the textbook prints it: two columns, side boxes, text wrapped round
+pictures and labels on diagrams all look like the book, because they are the book. The book's real text lies over the
+page, invisible but selectable, so tapping highlighted words, selecting words to explain, highlighting and notes all work
+as before. Laptops and tablets open in Page view, phones in Reading view (the flowing text), with a switch between them.
+
+- Made while the book is processed: a WebP image of every page (about 50 KB a page, roughly 15 MB for a 300-page book)
+  and the position of every printed line, in `<content_key>/layout/`. `backend/app/pagelayer.py`.
+- Text positions come from the PDF. A scanned page has none, so its lines are laid out from M1's reading of the page;
+  close, not exact, and marked "selection is approximate" on the page.
+- Word books get Page view too when LibreOffice is in the image (it lays the book out as printed).
+- Served through the paid-content route: a student who has not got the book cannot load its pages.
+- `frontend/src/pages/student/PageView.jsx`, `pageview.css`; the reader picks the view and remembers it.
+
+## The page check
+Every converted page is compared with the printed page, and problems are flagged on that page for the reviewer:
+words printed on the page that are missing from the digital page, text in a different order (columns, side boxes),
+a picture missing, a picture cut off (ink on the printed page just outside its crop). Headers, page numbers and labels
+inside pictures are left out of the comparison. A clean conversion gives no flags. The job shows "Page check: N
+problem(s) flagged" when there are any.
+
+## One printed figure is one picture
+New M1 pass, `m1/eduverse_book2docx/figjoin.py`, after captions are bound:
+- Sub-figures (a), (b) under one caption become one picture, labels included.
+- Pieces of one picture that touch, with nothing between them, become one picture.
+- Labels beside a diagram ("Petal", "Sepal", at the end of leader lines) stay in the picture instead of turning into
+  body text.
+- Joined figures are cut again from the page image as one rectangle.
+- Two figures that each have their own caption are never joined.
+- Settings: `join_figures`, `figure_join_gap_pt`, `figure_touch_gap_pt` (Super Admin, Book reading).
+Also fixed: a caption is only paired with a figure on its own page (Figure 1.4 went to a picture on page 3); a word
+broken by a hyphen at the end of a line is joined ("photo- synthesis"); a page whose text all ran on from the page
+before now gets its review page (it blocked Publish); a table split across pages takes the caption printed under its
+second half.
+
+## Reviewer tools
+- **Crop again on the original page** on every picture: drag a box on the printed page. Fixes a picture that is cut off,
+  too tight or the wrong part. Tick other pieces on the page to join them into it.
+- **Add a picture from this page**: a missing picture, or the second half of one that should be two (split).
+- **Move up / move down** on every block: puts text back in the printed order.
+- Crops are cut from the uploaded PDF at 200 DPI. `backend/app/routers/reviewtools.py`, `frontend/src/pages/reviewer/CropTool.jsx`.
+
+## Security
+- The original page images (`/api/review/books/{id}/pages/{n}/original.png`) answered anyone, signed in or not.
+  Reviewers and Super Admin only now. The image cookie now covers `/api`, so plain images on the review screen carry it;
+  every other endpoint still needs the Authorization header.
+
+## Tested
+A layout test book with two columns, a side box, a picture printed in two halves, sub-figures (a)/(b), a labelled
+diagram with leader lines, a hyphenated line break, a footnote and a paragraph running onto the next page: 13 layout
+checks pass, plus the 35 v47 checks, every API route as all five roles (0 server errors), every screen in Chrome, Page
+view (tap, select and explain, highlight, switch views, phone width) and the crop tool by dragging a box.
+Not tested here: scanned books read by a real model, Tamil-medium books. Send one of each to tune those.
+
+# v47 (25 Nov): fixes from the full test audit
+
+Every item below was reproduced first, then fixed and checked again by running it (35 automated checks, every API
+route as all five roles, every screen in Chrome).
+
+## It kept crashing
+- **Error boundary.** One failing screen no longer blanks the whole app. The sidebar stays; the screen shows Reload and
+  Go back; the error goes to the server log as `[EV CLIENT]` (`POST /api/client-error`). `frontend/src/ErrorBoundary.jsx`.
+- **After a deploy.** A tab opened before a deploy used to go blank on its next click (the screen files are renamed on
+  every build). It now reloads itself once and carries on. `main.jsx` (`vite:preloadError`).
+- **Missing API routes.** `/api/...` paths nobody answers now get a JSON 404. Before, they got the web page with status 200,
+  so screens received empty data and broke quietly. `main.py` `spa()`.
+- **Flags and issues.** Its five endpoints were lost in an earlier build; the screen crashed. Restored in
+  `routers/issues.py`: issues list, summary, mark fixed, books whose content file is missing, and the storage check.
+  The server also prints `[EV STORAGE]` on start when files are on a disk that a deploy wipes.
+
+## Your three bugs
+- **Exam papers not visible to students.** A reviewer approving a paper now sets the pack live (it only happened on the
+  Super Admin's Publish before). Blank questions block approval. `routers/exams.py` `_pack_live`.
+- **No explanations after approval.** Publishing no longer starts a job it knows will fail. If the model cannot answer
+  (for example Ollama on a cloud server) or the last attempt failed in the last 10 minutes, the reviewer is told the real
+  reason instead of "being written", and no job is started. Writing ahead on publish now also runs when "approve before
+  publishing" is off. A new install with `OPENAI_API_KEY` set starts on OpenAI, not Ollama. Write-ahead now also picks up
+  bold terms and "X is the ... pigment/process/..." sentences, so far more words have saved explanations.
+  `routers/learn.py` `explain_gate`, `explain_store.py` `provider_problem`, `seed.py`, `converter/keywords.py`.
+- **Broken images.** TIFF, BMP, EMF and WMF pictures from Word books are converted to PNG when read
+  (`webimage.py` in both `m1/` and `converter/`). Pictures in books converted before v47 are converted the first time they
+  are opened and saved back. Any picture that still cannot load shows "Picture not available" instead of a broken icon
+  (`BookImg` in `ui.jsx`). EMF and WMF need LibreOffice, now in the Docker image (`--build-arg OFFICE=0` leaves it out).
+
+## Conversion
+- Captions no longer swallow the sentence printed under them (`m1/lines.py`).
+- A sentence with a formula inside it stays a sentence instead of becoming an equation with its spaces lost (`m1/mathtools.py`).
+- A drawn diagram joined by lines stays one picture with its lines (`m1/sources/pdf_source.py` `_vector_regions`).
+- A table that runs onto the next page is joined back into one table with the right header (`converter/__main__.py`).
+- The reader opens on Unit 1, not on the title page.
+
+## Smaller fixes
+- Chapter test drafts are written when a textbook goes live, ready for the reviewer to approve.
+- Exam questions are tagged using the chapter text, the options and the answer, not only titles.
+- Mock tests use each exam's own marking (NEET UG and JEE Main +4/-1, CUET UG +5/-1, BITSAT +3/-1, KCET and state CETs +1/0).
+  Check these each year in `taxonomy.py` `MARKING`.
+- Edits to a paper students can already see cannot leave a question blank.
+- Sign in gives the same answer for a wrong password and the wrong sign-in page, so it no longer confirms a password.
+- A teacher's Nudge now appears on the student's Home.
+- Notes can be edited in the Notebook. Audit log has "Check the log has not been changed".
+- An individual learner's store opens on the exam or board they chose at sign up.
+- The "Not sure" button is styled on exam pages.
+- Demo: live demo books have content (a sample flow document is in `samples/`), so the demo student can read them.
+
+## Still to check on your server
+- Storage: open Flags and issues. If it says "Not safe", attach a Railway volume at `/data/storage` or use S3.
+- AI settings: choose OpenAI (or Claude) and save the key, unless an Ollama server is really reachable.
+- Memory: watch the memory graph while a large book is processed. If it nears the limit, run the worker as its own
+  service (`ROLE=worker`, and `EMBEDDED_WORKER=0` on the API) so reading a book can never restart the website.
+- Scanned books with a real model were not tested here (no model key in the test setup).
+
 # EduVerse — all agreed changes
 
 Built on **EduVerse_Code_4168**. Nothing outside this list is touched.

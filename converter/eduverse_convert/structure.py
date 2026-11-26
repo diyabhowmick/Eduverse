@@ -9,12 +9,12 @@ NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "se
 SUBJECTS = ["social science", "computer science", "mathematics", "maths", "science", "physics", "chemistry", "biology", "english",
             "tamil", "hindi", "malayalam", "kannada", "telugu", "history", "geography", "civics", "economics", "environmental studies", "evs"]
 SEC_RE = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})(?:\.(\d{1,2}))?\.?\s+(\S.*)$")
-BOX = [("learning_objectives", r"learning objectives"), ("activity", r"activity\s*\d+"), ("problem", r"problem\s*\d+"),
+BOX = [("learning_objectives", r"learning objectives"), ("activity", r"activity\s*\d+(?:\s+\d+)*"), ("problem", r"problem\s*\d+(?:\s+\d+)*"),
        ("do_you_know", r"do you know\s*\??"), ("more_to_know", r"more to know"), ("info_bits", r"info\s*bits"),
        ("points", r"points to remember"), ("glossary", r"glossary"), ("exercises", r"textbook exercises|exercises"),
-       ("concept_map", r"concept map"), ("ict", r"ict corner"), ("references", r"reference books?"), ("internet", r"internet resources")]
+       ("concept_map", r"concept map"), ("keywords", r"key ?words|key terms"), ("ict", r"ict corner"), ("references", r"reference books?"), ("internet", r"internet resources")]
 BOX_TITLES = {"learning_objectives": "Learning objectives", "do_you_know": "Do you know?", "more_to_know": "More to know", "info_bits": "Info bits",
-              "points": "Points to remember", "glossary": "Glossary", "exercises": "Textbook exercises", "concept_map": "Concept map",
+              "points": "Points to remember", "glossary": "Glossary", "exercises": "Textbook exercises", "concept_map": "Concept map", "keywords": "Keywords", "note": "Note",
               "ict": "ICT corner", "references": "Reference books", "internet": "Internet resources"}
 TAIL_BOXES = {"points", "glossary", "exercises", "concept_map", "ict", "references", "internet"}   # run to the next big marker
 SHORT_BOXES = {"activity", "problem", "more_to_know", "info_bits"}                                    # a few paragraphs
@@ -23,6 +23,20 @@ HEADING_STYLES = {"EVH1", "EVH2", "EVH3"}
 
 def norm(s):
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+SMALL_WORDS = {"a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of", "on", "or", "the", "to", "with"}
+
+
+def nice_title(text):
+    """Chapter title as a reader expects it: spaces tidied, an ALL CAPS title
+    put in title case with the small words kept small, any other title left as
+    the book printed it ("Crop Production and Management", not "... And ...")."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    if not t or t != t.upper():
+        return t
+    words = t.lower().split(" ")
+    return " ".join(w if (k and w in SMALL_WORDS) else w[:1].upper() + w[1:] for k, w in enumerate(words))
 
 
 def box_kind(text):
@@ -343,7 +357,11 @@ def build(raw):
                 hit = next((el for i, el in seq if el["kind"] == "p" and el["style"] == want
                             and el.get("text", "").strip() and not box_kind(el["text"])), None)
                 if hit:
-                    title = hit["text"].strip().title(); break
+                    title = nice_title(hit["text"]); break
+        printed_title = title
+        if title:   # "Chapter 2 Crop Production" under a "Unit 2" label reads twice: keep the name only
+            bare = re.sub(r"^\s*(?:chapter|unit|lesson)\s+[0-9ivxlIVXL]+\s*[:.\-–]?\s*", "", title, flags=re.I)
+            title = bare or title
         ch = {"number": n, "title": title or ("Opening pages" if n == 0 else f"Unit {n}"), "page_start": items[s]["page"], "page_end": items[e - 1]["page"],
               "sections": [], "blocks": []}
         # captions available in this chapter
@@ -351,11 +369,15 @@ def build(raw):
                 and (CAP_FIG.match(el["text"]) or CAP_TAB.match(el["text"]))]
         used_caps = set()
 
+        page_of = {i: el.get("page") for i, el in seq}
+
         def take_caption(i, pat):
             best = None
             for ci, cel in caps:
                 if ci in used_caps or not pat.match(cel["text"]):
                     continue
+                if page_of.get(i) is not None and cel.get("page") is not None and cel.get("page") != page_of.get(i):
+                    continue   # a caption on another page belongs to another figure ("Figure 1.4" went to a page-3 picture)
                 d = ci - i
                 if -4 <= d <= 5 and (best is None or abs(d) < abs(best[0] - i)):
                     best = (ci, cel)
@@ -367,6 +389,7 @@ def build(raw):
         ch["sections"].append(section)
         box = None; box_left = 0; box_seen_end = False
         list_block = None
+        cur_panel = None   # M1 marks the paragraphs of each printed box; those marks decide the box, not title guessing
         opened = False
 
         def emit(block):
@@ -394,7 +417,7 @@ def build(raw):
                         continue
                     if nt in rep or is_code(t) or nt == "u n i t":
                         ledger.append({"page": page, "what": "running header or footer", "text": t}); continue
-                    if not opened and (nt == norm(title) or re.fullmatch(rf"unit {n}", nt)):
+                    if not opened and (nt in (norm(title), norm(printed_title or "")) or re.fullmatch(rf"unit {n}", nt)):
                         opened = True; continue
                     if el["style"] == "EVCaption" and i in used_caps:
                         continue
@@ -410,7 +433,29 @@ def build(raw):
                     ch["sections"].append(section)
                     emit({"type": "heading", "level": lvl, "number": num, "text": section["title"], "page": page})
                     continue
-                kind = box_kind(t) if not el.get("drawings") else None
+                pnl = el.get("panel")
+                if pnl is None and cur_panel is not None:
+                    if box is not None and box.get("panel") == cur_panel:
+                        box = None
+                    cur_panel = None; list_block = None
+                if pnl is not None and pnl != cur_panel:
+                    cur_panel = pnl; list_block = None
+                    kind = box_kind(t) if not el.get("drawings") else None
+                    short_title = not el.get("drawings") and len(t) <= 60 and not t.endswith((".", ":", "?")) or kind is not None
+                    title = BOX_TITLES.get(kind, t) if kind else (t if short_title else "Note")
+                    box = None
+                    if kind in TAIL_BOXES:
+                        section = {"id": f"c{n}-{kind}", "number": "", "title": BOX_TITLES[kind], "level": 2, "kind": kind}
+                        if not any(sx["id"] == section["id"] for sx in ch["sections"]):
+                            ch["sections"].append(section)
+                    box = emit({"type": "box", "kind": kind or "note", "title": title, "page": page, "children": [], "panel": pnl})
+                    box_left = 10 ** 6; box_seen_end = False
+                    if short_title:
+                        continue
+                if pnl is not None and box is not None and box.get("panel") == pnl:
+                    kind = None   # inside a marked box: no title guessing, no short-box closing
+                else:
+                    kind = box_kind(t) if not el.get("drawings") else None
                 if kind == "do_you_know":
                     ledger.append({"page": page, "what": "Do you know label: box text could not be located, kept as a marker", "text": t})
                     list_block = None
@@ -432,7 +477,7 @@ def build(raw):
                     box = None
                     emit({"type": "heading", "level": 2, "number": "", "text": "Introduction", "page": page}); continue
                 # close short boxes
-                if box is not None and box["kind"] in SHORT_BOXES:
+                if box is not None and box["kind"] in SHORT_BOXES and box.get("panel") is None:
                     starts_new = bool(re.match(r"^[A-Z(“\"]", t)) and not t.lower().startswith("solution")
                     if box_left <= 0 or (box_seen_end and starts_new and box["kind"] != "problem") or (box["kind"] == "problem" and box_seen_end and starts_new and len(t) > 140):
                         box = None
@@ -444,10 +489,16 @@ def build(raw):
                         if deco:
                             ledger.append({"page": page, "what": f"decorative image removed ({why})", "text": (el.get("desc") or {}).get("summary", "")[:100]}); continue
                         mm = CAP_FIG.match(cap) if cap else None
-                        if not el.get("desc"):
+                        desc = el.get("desc")
+                        capt = mm.group(3).strip() if mm else ""
+                        if not desc and capt:
+                            # no AI description: the printed caption still tells a screen reader what the picture is
+                            desc = {"summary": capt, "quality": "caption"}
+                            ledger.append({"page": page, "what": "figure described from its caption only", "text": f"images/{d['hash']}.{d['ext']}"})
+                        elif not desc:
                             ledger.append({"page": page, "what": "figure kept without a description (reviewer should describe it)", "text": f"images/{d['hash']}.{d['ext']}"})
                         emit({"type": "figure", "image": f"images/{d['hash']}.{d['ext']}", "width": d["size"][0], "height": d["size"][1],
-                              "number": mm.group(2) if mm else "", "caption": (mm.group(3).strip() if mm else ""), "desc": el.get("desc"), "page": page})
+                              "number": mm.group(2) if mm else "", "caption": capt, "desc": desc, "page": page})
                     continue
                 if el.get("math") and (el["style"] == "EVEquation" or not t):
                     list_block = None
@@ -498,6 +549,21 @@ def build(raw):
         for ci, cel in caps:
             if ci not in used_caps:
                 ledger.append({"page": cel["page"], "what": "caption with no matching figure or table", "text": cel["text"].strip()})
+        # The opening "Introduction" topic: drop it when nothing is in it, and name it for what it
+        # holds when that is only the learning objectives (no topic called Introduction with no introduction).
+        intro = [b for b in ch["blocks"] if b.get("section") == f"c{n}-intro"]
+        if not intro:
+            ch["sections"] = [sx for sx in ch["sections"] if sx["id"] != f"c{n}-intro"]
+        elif all(b.get("type") == "box" and b.get("kind") == "learning_objectives" for b in intro):
+            for sx in ch["sections"]:
+                if sx["id"] == f"c{n}-intro":
+                    sx["title"] = "Learning objectives"
+        for b in ch["blocks"]:   # a keyword strip prints one word a line: that is a list, not ten paragraphs
+            kids = b.get("children") or []
+            if b.get("type") == "box" and b.get("kind") == "keywords" and len(kids) >= 3 \
+                    and all(k["type"] == "paragraph" and len(k.get("text", "").split()) <= 4 for k in kids):
+                b["children"] = [{"type": "list", "ordered": False, "id": kids[0]["id"], "section": kids[0].get("section"),
+                                  "page": kids[0].get("page"), "items": [{"text": k["text"], "bold": []} for k in kids]}]
         chapters.append(ch)
 
     # TOC availability and partial chapters

@@ -45,6 +45,11 @@ class Config:
     native_min_text_area: float = 0.02   # fraction of page area covered by text
     corrupt_text_ratio: float = 0.15     # above this the text layer is unusable
 
+    # ---- Figures: one printed figure is one picture ----------------------
+    join_figures: bool = True          # join sub-figures and pieces, keep labels beside a diagram in it
+    figure_join_gap_pt: float = 60.0   # sub-figures under one caption may be this far apart (or 1.2x their width)
+    figure_touch_gap_pt: float = 12.0  # pieces this close with nothing between are one picture
+
     # ---- Structure -------------------------------------------------------
     body_size_tolerance: float = 0.30   # pt band that counts as "the same size"
     heading_max_chars: int = 90

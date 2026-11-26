@@ -206,25 +206,45 @@ def is_person(block) -> bool:
     return bool(_PEOPLE.search(text))
 
 
+def _few_colours(im) -> bool:
+    """Most of the picture is a handful of colours: printed flat artwork with anti-aliased edges."""
+    q = im.quantize(16); counts = sorted((c for c, _ in q.getcolors() or []), reverse=True)
+    return sum(counts[:8]) >= 0.97 * sum(counts) if counts else False
+
+
 def enhance(data: bytes, photo: bool = True) -> bytes:
     """Clean up a printed picture without AI: even out the colour cast and yellowing, lift contrast,
     remove speckle, sharpen, and enlarge small scans. Nothing is added or redrawn."""
-    from PIL import Image, ImageFilter, ImageOps
+    from PIL import Image, ImageFilter, ImageStat
     im = Image.open(io.BytesIO(data)).convert("RGB")
-    # white balance: stretch each channel between its 1st and 99th percentile
-    chans = []
-    for ch in im.split():
-        hist = ch.histogram(); total = sum(hist); lo = hi = None; acc = 0
+    # Flat artwork (a few solid colours) is left exactly as printed: stretching
+    # each colour channel on its own turned brown soil red and green seeds black.
+    small = im.copy(); small.thumbnail((200, 200))
+    flat = len(small.getcolors(200 * 200) or []) <= 96 or _few_colours(small)
+    if not flat:
+        # yellowed paper: only a warm cast on the paper white is corrected, and the
+        # same scale is used for the whole picture so hues keep their colour
+        grey = im.convert("L"); hist = grey.histogram(); total = sum(hist); acc = 0; cut = 255
+        for i in range(255, -1, -1):
+            acc += hist[i]
+            if acc >= total * 0.02: cut = i; break
+        mask = grey.point(lambda v: 255 if v >= cut else 0)
+        r, g, b_ = (ImageStat.Stat(c, mask).mean[0] for c in im.split())
+        if b_ < min(r, g) - 6 and min(r, g, b_) > 120:
+            im = Image.merge("RGB", [c.point(lambda v, k=255 / max(1.0, m): min(255, round(v * k)))
+                                     for c, m in zip(im.split(), (r, g, b_))])
+        if photo:
+            im = im.filter(ImageFilter.MedianFilter(3))
+        # contrast on brightness only (same map on every channel)
+        hist = im.convert("L").histogram(); total = sum(hist); acc = 0; lo = hi = None
         for i, n in enumerate(hist):
             acc += n
-            if lo is None and acc >= total * 0.01: lo = i
-            if acc >= total * 0.99: hi = i; break
-        lo, hi = lo or 0, max((hi or 255), (lo or 0) + 1)
-        chans.append(ch.point(lambda v, lo=lo, hi=hi: max(0, min(255, round((v - lo) * 255 / (hi - lo))))))
-    im = Image.merge("RGB", chans)
-    if photo:
-        im = im.filter(ImageFilter.MedianFilter(3))
-    im = ImageOps.autocontrast(im, cutoff=0.5)
+            if lo is None and acc >= total * 0.005: lo = i
+            if acc >= total * 0.995: hi = i; break
+        lo, hi = lo or 0, hi or 255
+        if hi - lo < 230 and hi > lo:
+            k = 255 / (hi - lo)
+            im = im.point(lambda v: max(0, min(255, round((v - lo) * k))))
     long = max(im.size)
     if long < 900:
         f = 900 / long
@@ -384,14 +404,14 @@ def redo_figure(book, block, specs: dict, cfg: dict, report: dict, allow_svg=Tru
             return rec
         if kind not in cfg.get("generate_kinds", []):
             rec["error"] = f"{kind or 'This kind of figure'} is not set to be generated in M2 settings"
-            return rec
+            return _clean_copy(book, store, src, stem, n, kind, rec, report)
         if not d.get("summary") and not (src and cfg.get("replica", True)):
             rec["error"] = "No description to draw from"
-            return rec
+            return _clean_copy(book, store, src, stem, n, kind, rec, report)
         ok, why = ready(cfg)
         if not ok:
             rec["error"] = why
-            return rec
+            return _clean_copy(book, store, src, stem, n, kind, rec, report)
         if report.get("calls", 0) >= int(cfg.get("max_images_per_book", 100)):
             rec["error"] = f"Spend limit reached ({cfg.get('max_images_per_book')} images for this book)"
             return rec
@@ -403,13 +423,76 @@ def redo_figure(book, block, specs: dict, cfg: dict, report: dict, allow_svg=Tru
         else:
             rec["prompt"] = prompt_for(block, book, cfg)
             png = _png(generate(rec["prompt"], w, h, cfg)); rec["mode"] = "from words"
+        png = _png(fit_aspect(png, block.get("width") or 0, block.get("height") or 0), 1536)
         key = f"images/m2/{stem}_v{n}.png"
         store.put(f"{book.content_key}/{key}", png)
         rec.update(status="generated", method=cfg["provider"], model=cfg["providers"][cfg["provider"]].get("model", ""), image=key)
+        want = [t for t in (d.get("text_in_figure") or []) if str(t).strip()]
+        if want and cfg["provider"] in ("openai", "gemini") and cfg.get("check_labels", True):
+            try:   # image models misspell or drop labels; read the new picture back and tell the reviewer
+                got = deep_describe(png, cfg).get("text_in_figure") or []
+                rec["label_check"] = label_check(want, got)
+                if rec["label_check"]["missing"]:
+                    rec["note"] = "Check the labels: " + ", ".join(rec["label_check"]["missing"][:8]) + " not found in the new picture."
+            except Exception as e:
+                rec["label_check"] = {"error": str(e)[:160]}
         report["generated"] = report.get("generated", 0) + 1
     except Exception as e:
         rec.update(status="failed", error=str(e)[:400])
         report["failed"] = report.get("failed", 0) + 1
+    return rec
+
+
+def _norm_label(t) -> str:
+    return re.sub(r"[^0-9a-z]+", "", str(t).lower())
+
+
+def label_check(want: list, got: list) -> dict:
+    """Printed labels that the new picture does not carry, spelled exactly (case and spaces ignored)."""
+    have = {_norm_label(g) for g in got}
+    missing = [w for w in want if _norm_label(w) and _norm_label(w) not in have]
+    return {"expected": len(want), "missing": missing}
+
+
+def fit_aspect(png: bytes, w0: float, h0: float) -> bytes:
+    """An image model only draws a few fixed shapes. Pad the new picture with its own
+    background to the printed figure's shape, so the page does not jump and nothing is stretched."""
+    if not w0 or not h0:
+        return png
+    from PIL import Image
+    im = Image.open(io.BytesIO(png)).convert("RGB")
+    want = w0 / h0; have = im.width / im.height
+    if abs(have - want) / want < 0.04:
+        return png
+    W, H = (round(im.height * want), im.height) if want > have else (im.width, round(im.width / want))
+    corners = [im.getpixel(p) for p in ((0, 0), (im.width - 1, 0), (0, im.height - 1), (im.width - 1, im.height - 1))]
+    bg = tuple(sorted(c[i] for c in corners)[1] for i in range(3))
+    out = Image.new("RGB", (W, H), bg); out.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
+    buf = io.BytesIO(); out.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _clean_copy(book, store, src, stem, n, kind, rec, report) -> dict:
+    """When a figure is not redrawn, still offer the reviewer the no-AI clean up, but only
+    when it visibly improves the picture (flat artwork is left as printed)."""
+    if not src:
+        return rec
+    try:
+        from PIL import Image, ImageChops
+        out = enhance(src, photo=kind not in ("diagram", "chart", "map"))
+        a = Image.open(io.BytesIO(src)).convert("RGB"); b = Image.open(io.BytesIO(out)).convert("RGB").resize(a.size)
+        diff = ImageChops.difference(a, b).convert("L")
+        changed = sum(diff.histogram()[24:]) / max(1, a.width * a.height)
+        if changed < 0.05 and max(a.size) >= 900:
+            return rec   # nothing a reader would notice
+        key = f"images/m2/{stem}_v{n}_clean.png"
+        store.put(f"{book.content_key}/{key}", out)
+        rec.update(status="generated", method="enhance", image=key,
+                   note=((rec["error"] + ". ") if rec.get("error") else "") + "Offered instead: the printed picture cleaned up (colour, contrast, sharpness, size), nothing redrawn.")
+        rec["error"] = ""
+        report["cleaned"] = report.get("cleaned", 0) + 1
+    except Exception as e:
+        rec["note"] = f"Clean up failed: {str(e)[:120]}"
     return rec
 
 

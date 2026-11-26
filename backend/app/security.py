@@ -39,7 +39,9 @@ def set_session_cookie(response, token: str, request=None):
     """The same token as an HttpOnly cookie that only goes to book images, so a plain <img> can load them
     while a script on the page can never read it."""
     secure = bool(request and (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"))
-    response.set_cookie(COOKIE, token, max_age=settings.jwt_hours * 3600, httponly=True, samesite="strict", secure=secure, path="/api/content")
+    # Path /api: plain <img> tags for book pictures (/api/content) and original pages (/api/review/.../original.png)
+    # carry it. Every other endpoint ignores the cookie and needs the Authorization header, so it adds no CSRF risk.
+    response.set_cookie(COOKIE, token, max_age=settings.jwt_hours * 3600, httponly=True, samesite="strict", secure=secure, path="/api")
 
 
 def current_user(cred: HTTPAuthorizationCredentials = Depends(bearer), db: Session = Depends(get_db)) -> User:

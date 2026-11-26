@@ -1,3 +1,4 @@
+import { BookImg } from './ui'
 // Eddie sits at the bottom of the reading page. Tap him to ask about the part you are reading, by voice or text.
 import { useEffect, useState } from 'react'
 import { api } from './api'
@@ -65,7 +66,7 @@ export default function ReaderEddie({ bk, ch, section, sectionText, figures, foc
           <div style={{ display: 'flex', gap: 6 }}><Tools c={c} replay={() => c.talk(c.say, { log: false })} />
             <button type="button" className="bd-icon" aria-label="Close" title="Close" onClick={toggle}><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>
         </div>
-        {fig ? <div className="rd-fig"><img src={`/api/content/${bookId}/${fig.image}`} alt={fig.caption || 'Figure'} />
+        {fig ? <div className="rd-fig"><BookImg src={`/api/content/${bookId}/${fig.image}`} alt={fig.caption || 'Figure'} />
             <div className="rd-fig-c"><span><b>{fig.number ? 'Figure ' + fig.number : 'Figure'}</b> {fig.caption}</span>
             <button type="button" className="linkbtn" onClick={() => setFig(null)}>Back to the page</button></div></div>
           : <div className="rd-where">Now reading: <b>{where}</b></div>}

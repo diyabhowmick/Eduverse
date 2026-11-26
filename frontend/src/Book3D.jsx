@@ -6,12 +6,12 @@ import { useEffect, useRef, useState } from 'react'
 
 const TINTS = [
   [/chem/i, '#22B8CF', 'hex'], [/phys/i, '#3B82F6', 'wave'], [/bio|botany|zoology/i, '#2BB673', 'cell'],
+  [/social|history|geograph|civic|econom|politic/i, '#F59E0B', 'map'],   // before science: "Social Science" is not Science
   [/science|evs/i, '#2BB673', 'atom'], [/math|algebra|geometry|statistic/i, '#3B82F6', 'grid'],
-  [/social|history|geograph|civic|econom|politic/i, '#F59E0B', 'map'],
   [/english|tamil|hindi|kannada|telugu|malayalam|sanskrit|french|language|literature/i, '#A855F7', 'type'],
   [/computer|coding|informatic/i, '#22B8CF', 'code'],
 ]
-export const tintOf = b => { const s = (b.subject || '') + ' ' + (b.title || ''); const t = TINTS.find(([re]) => re.test(s)); return t ? { c: t[1], p: t[2] } : { c: '#E0212F', p: 'arc' } }
+export const tintOf = b => { const s = b.subject || b.title || ''; const t = TINTS.find(([re]) => re.test(s)); return t ? { c: t[1], p: t[2] } : { c: '#E0212F', p: 'arc' } }
 
 export const flat = () => {
   try {

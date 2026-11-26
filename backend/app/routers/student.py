@@ -91,7 +91,20 @@ def home(db: Session = Depends(get_db), me=Depends(student)):
             "goal_minutes": int(prof.get("goal_minutes") or 20), "exam_date": prof.get("exam_date") or "",
             "today_minutes": round((days[date.today().isoformat()].seconds if date.today().isoformat() in days else 0) / 60),
             "today_questions": _today_questions(db, me), "practice": weak_chapters(db, me), "last_exam": _last_exam(db, me, mine),
+            "nudge": _nudge(db, me),
             **_tests_home(db, me, mine, prog)}
+
+
+def _nudge(db, me):
+    """The latest nudge from a teacher in the last 7 days, shown on Home. Before this a teacher was told the
+    student had been nudged, but nothing ever reached the student."""
+    from ..models import AuditLog
+    a = db.query(AuditLog).filter(AuditLog.action == "student.nudge", AuditLog.target_type == "user", AuditLog.target_id == str(me.id),
+                                  AuditLog.at >= datetime.utcnow() - timedelta(days=7)).order_by(AuditLog.id.desc()).first()
+    if not a:
+        return None
+    t = db.query(User).filter(User.email == a.actor_email).first()
+    return {"from": t.name if t else "Your teacher", "at": a.at}
 
 
 def _tests_home(db, me, mine, prog):
@@ -111,7 +124,7 @@ def _tests_home(db, me, mine, prog):
         done = db.query(ChapterAttempt).filter(ChapterAttempt.user_id == me.id, ChapterAttempt.book_id == b["id"], ChapterAttempt.chapter == ch,
                                               ChapterAttempt.finished_at >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)).first()
         try:
-            bk = db.get(Book, b["id"]); title = next((c["title"] for c in C.load(bk, C.reader_key(bk))["chapters"] if c["number"] == ch), "")
+            bk = db.get(Book, b["id"]); title = next((c["title"] for c in C.load_ro(bk, C.reader_key(bk))["chapters"] if c["number"] == ch), "")
         except Exception:
             title = ""
         nxt = {"book_id": b["id"], "book_title": b["title"], "chapter": ch, "chapter_title": title, "count": n[ch], "done_today": bool(done)}
@@ -244,7 +257,7 @@ def store_book(bid: int, db: Session = Depends(get_db), me=Depends(student)):
         out["papers"] = len(papers)
     else:
         try:
-            chs = C.load(b, C.reader_key(b)).get("chapters", []) if C.reader_key(b) else []
+            chs = C.load_ro(b, C.reader_key(b)).get("chapters", []) if C.reader_key(b) else []
         except Exception:
             chs = []
         out["chapters"] = [{"number": c.get("number"), "title": c.get("title", "")} for c in chs][:40]
@@ -364,13 +377,22 @@ def readable_book(db, me, bid) -> Book:
 @router.get("/books/{bid}")
 def read_book(bid: int, db: Session = Depends(get_db), me=Depends(student)):
     b = readable_book(db, me, bid)
-    data = C.load(b, C.reader_key(b))
+    data = C.load_ro(b, C.reader_key(b))
     p = db.get(StudentProgress, (me.id, bid))
     packs = [x for x in db.query(Book).filter(Book.track == "exam", Book.status == "live") if bid in (x.linked_book_ids or [])]
     return {"practice_packs": [{"id": x.id, "title": x.title, "owned": x.id in owned_ids(db, me)} for x in packs],
             "id": b.id, "title": b.title, "board": b.board, "grade": b.grade, "subject": b.subject, "book": data["book"], "toc": data["toc"],
             "chapters": data["chapters"], "progress": {"percent": round(p.percent) if p else 0, "sections": p.sections if p else [], "position": p.position if p else {}},
-            "rules": rules_for(db, me), "tests": test_counts(db, bid)}
+            "rules": rules_for(db, me), "tests": test_counts(db, bid), "layout": _layout(b)}
+
+
+def _layout(b):
+    """Page view pages of the version this student reads, or available False."""
+    try:
+        import json as _j
+        return _j.loads(C._store().get(f"{C.reader_key(b)}/layout/index.json"))
+    except Exception:
+        return {"available": False}
 
 
 class ProgressIn(BaseModel):
@@ -383,7 +405,7 @@ class ProgressIn(BaseModel):
 def progress(bid: int, body: ProgressIn, db: Session = Depends(get_db), me=Depends(student)):
     b = readable_book(db, me, bid)
     secs = max(0, min(body.seconds, 300))  # at most 5 minutes per ping
-    data = C.load(b, C.reader_key(b))
+    data = C.load_ro(b, C.reader_key(b))
     total = sum(1 for ch in data["chapters"] for s in ch["sections"] if s["number"])
     p = db.get(StudentProgress, (me.id, bid))
     first_today = not p or not p.last_read or p.last_read.date() != datetime.utcnow().date()

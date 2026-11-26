@@ -14,8 +14,11 @@ def ensure_core(db: Session):
     if not db.query(User).filter(User.role == "super_admin").first():
         db.add(User(email=settings.superadmin_email, name="Super Admin", role="super_admin",
                     password_hash=hash_pw(settings.superadmin_password)))
+    import os
     for k, v in ALL.items():
         if not db.get(Setting, k):
+            if k == "ai" and os.getenv("OPENAI_API_KEY"):
+                v = {**v, "provider": "openai"}  # a server with an OpenAI key and no Ollama should not start on Ollama
             db.add(Setting(key=k, value=v))
     db.commit()
 
@@ -75,8 +78,10 @@ def demo(db: Session):
     c8a = db.query(ClassRoom).filter(ClassRoom.school_id == schools[0].id, ClassRoom.grade == "8", ClassRoom.section == "A").first()
     db.add(User(email="student@eduverse.local", name="Kavya S", role="student", school_id=schools[0].id, class_id=c8a.id, roll_no="8A00", password_hash=h))
     db.add(User(email="reviewer2@eduverse.local", name="Kavitha R", role="reviewer", password_hash=h))
-    bk = [("Science", "8", "live", 282, 249, "Tamil"), ("Science", "9", "rejected", 296, 249), ("Mathematics", "8", "processing", 240, 229),
-          ("Science", "7", "processing", 212, 229), ("Social Science", "8", "live", 268, 229), ("Science", "10", "upcoming", 0, 279),
+    # Only the book the bundled sample can fill is live, in the sample's language, so a demo never opens
+    # a "Tamil medium" or "Social Science" book to English Science text.
+    bk = [("Science", "8", "live", 282, 249), ("Science", "9", "rejected", 296, 249), ("Mathematics", "8", "processing", 240, 229),
+          ("Science", "7", "processing", 212, 229), ("Social Science", "8", "upcoming", 0, 229), ("Science", "10", "upcoming", 0, 279),
           ("Mathematics", "9", "upcoming", 0, 249), ("English", "8", "retired", 190, 199)]
     books = []
     for row in bk:
@@ -89,8 +94,7 @@ def demo(db: Session):
     books[1].review_note = "Pages 12 to 18: figures are cut in half in the scan. Rescan those pages and run M1 again."
     books[1].reviewed_by, books[1].reviewed_at = "reviewer@eduverse.local", now - timedelta(days=3)
     jobs = [(books[0], "done", 282, 282, ""), (books[1], "done", 296, 296, ""), (books[2], "done", 240, 240, ""),
-            (books[3], "failed", 212, 41, "Page 42: VLM returned no JSON after one retry. Page image is 90 degrees rotated."),
-            (books[4], "done", 268, 268, "")]
+            (books[3], "failed", 212, 41, "Page 42: VLM returned no JSON after one retry. Page image is 90 degrees rotated.")]
     for b, st, p, pd, err in jobs:
         db.add(Job(book_id=b.id, filename=f"{b.subject.lower().replace(' ', '_')}_std{b.grade}.pdf",
                    storage_key=f"originals/{b.id}/demo.pdf", status=st, pages=p, pages_done=pd, cost_credits=p,
@@ -154,7 +158,25 @@ def demo(db: Session):
         db.add(AuditLog(at=now - timedelta(hours=6 * (len(acts) - i)), actor_email=settings.superadmin_email,
                         actor_role="super_admin", action=a, target_type=t, target_id=tid, detail=det))
     db.commit()
-    sample = Path(__file__).resolve().parents[2] / "samples" / "tn_science_std8_flow.docx"
+    samples_dir = Path(__file__).resolve().parents[2] / "samples"
+    sample = samples_dir / "tn_science_std8_flow.docx"
+    if not sample.exists():
+        sample = next(iter(sorted(samples_dir.glob("*.docx"))), sample)
+    if sample.exists():
+        # The demo's live books had no content, so the demo student opened them to "This book is still being
+        # prepared". Give each one the sample's content, published, so the reader, explanations and tests work.
+        from .content import ingest_flow
+        from .models import ReviewPage
+        from .storage import get_storage as _gs
+        for lb in [b for b in books if b.status == "live" and not b.content_key]:
+            key = f"originals/{lb.id}/{sample.name}"
+            _gs().put(key, sample.read_bytes()); lb.flow_key = key
+            ingest_flow(db, lb, sample.read_bytes())
+            lb.status, lb.live_key = "live", lb.content_key
+            lb.pages = db.query(ReviewPage).filter(ReviewPage.book_id == lb.id).count() or lb.pages   # the pages it really has
+            for rp in db.query(ReviewPage).filter(ReviewPage.book_id == lb.id):
+                rp.status = "approved"
+        db.commit()
     if sample.exists():  # the real sample book goes through the converter into the review queue
         from .content import ingest_flow
         b = Book(title="", subject="", board="", grade="", medium="English", status="processing", price=249)

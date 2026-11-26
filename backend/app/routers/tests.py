@@ -105,6 +105,27 @@ def generate(bid: int, body: GenIn, db: Session = Depends(get_db), me=Depends(re
     return {"made": made, "method": method, "note": note}
 
 
+def draft_on_publish(db, b: Book) -> int:
+    """When a textbook goes live, chapters with no test questions get draft questions written from the book itself
+    (highlighted words and figures, no model call, so publishing stays quick). They wait in the reviewer's Chapter
+    tests list. Before this, every chapter test and Daily 5 was empty until someone remembered to press Generate."""
+    try:
+        data = _content(b)
+    except Exception:
+        return 0
+    have = {c for (c,) in db.query(ChapterQuestion.chapter).filter(ChapterQuestion.book_id == b.id).distinct()}
+    made = 0
+    for ch in data.get("chapters", []):
+        if ch["number"] in have or not ch.get("keywords"):
+            continue
+        for q in T.rules(data, ch["number"]):
+            db.add(ChapterQuestion(book_id=b.id, chapter=ch["number"], origin="rules", status="draft",
+                                   **{k: q.get(k, d) for k, d in (("section", ""), ("section_title", ""), ("qtype", "mcq"), ("level", "easy"), ("text", ""),
+                                                                  ("options", []), ("answer", ""), ("explanation", ""), ("source", ""), ("figure", {}))}))
+            made += 1
+    return made
+
+
 class QIn(BaseModel):
     text: str
     options: list[dict] = []

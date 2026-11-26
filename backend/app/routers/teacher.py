@@ -89,12 +89,26 @@ def one_class(cid: int, db: Session = Depends(get_db), me=Depends(teacher)):
                                   User.role == "student").order_by(User.name).all()
     pm = progress_map(db, [u.id for u in studs])
     week = datetime.utcnow() - timedelta(days=7)
+    # each book on its own: an average over books hid which book a student had not opened
+    from ..models import StudentProgress
+    book_ids = [cb.book_id for cb in db.query(ClassBook).filter(ClassBook.class_id == cid)]
+    per = defaultdict(dict)
+    if studs and book_ids:
+        for p in db.query(StudentProgress).filter(StudentProgress.user_id.in_([u.id for u in studs]),
+                                                  StudentProgress.book_id.in_(book_ids)):
+            per[p.user_id][p.book_id] = round(p.percent)
     rows = []
     for u in studs:
         d = student_out(u, pm.get(u.id))
         d["behind"] = not d["last_read"] or d["last_read"] < week
+        d["by_book"] = {str(b): per[u.id].get(b, 0) for b in book_ids}
         rows.append(d)
-    return {"class": class_row(db, c), "students": rows}
+    by_book = []
+    for b in db.query(Book).filter(Book.id.in_(book_ids)).all() if book_ids else []:
+        vals = [per[u.id].get(b.id, 0) for u in studs]
+        by_book.append({"id": b.id, "title": b.title, "avg": round(sum(vals) / len(vals)) if vals else 0,
+                        "not_started": sum(1 for v in vals if v == 0)})
+    return {"class": class_row(db, c), "students": rows, "by_book": by_book}
 
 
 @router.get("/analytics")

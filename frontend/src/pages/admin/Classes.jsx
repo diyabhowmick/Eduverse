@@ -38,7 +38,7 @@ export default function Classes() {
         <div className="class-card" key={c.id}>
           <h4>{c.label}</h4>
           <div className="meta">{c.students} students{c.class_teacher ? `, ${c.class_teacher}` : ''}</div>
-          <div className="chips">{c.books.length ? c.books.map(b => <span className="chip" key={b.id}>{b.subject}</span>) : <span className="tag warn">No books yet</span>}</div>
+          <div className="chips">{c.books.length ? c.books.map(b => <span className="chip" key={b.id} title={b.title}>{b.title || b.subject}</span>) : <span className="tag warn">No books yet</span>}</div>
           <div className="foot"><button className="btn sm" onClick={() => setAssign(c)}>Assign books</button><button className="btn ghost sm" onClick={() => setEdit(c)}>Edit</button>
             <button className="btn ghost sm" style={{ color: 'var(--red)', marginLeft: 'auto' }} disabled={c.students > 0} title={c.students > 0 ? 'Move its students to another class first' : 'Delete this class'} onClick={() => setDel(c)}>Delete</button></div>
         </div>))}</div>

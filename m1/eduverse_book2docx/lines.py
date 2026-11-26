@@ -49,7 +49,7 @@ def dingbat_mark(ch: str) -> Optional[str]:
     return "\u2022"
 
 BULLET_START = re.compile(r"^\s*[\u2022\u25cf\u25aa\u2023\u2043\u25e6\-\*\u00b7\u25c6\u00be]\s+")
-NUMBER_START = re.compile(r"^\s*(\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])[\.\)]\s+")
+NUMBER_START = re.compile(r"^\s*(?:\((?:\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])\)|(?:\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])[\.\)])\s+")  # 1.  a)  (a)  (iv)
 SECTION_START = re.compile(r"^\s*\d{1,2}(?:\.\d{1,2}){0,3}\s+\S")
 SENTENCE_END = (".", "!", "?", ":", ";", "\u2026")
 
@@ -108,6 +108,12 @@ class Group:
     @property
     def x0(self): return min(l.x0 for l in self.lines)
 
+    @property
+    def x1(self): return max(l.x1 for l in self.lines)
+
+    @property
+    def y1(self): return max(l.y1 for l in self.lines)
+
 
 # ---------------------------------------------------------------------------
 # Reading the lines
@@ -151,6 +157,43 @@ def _dingbat_marks(page_dict) -> List[Tuple[float, float, float, str]]:
     return marks
 
 
+SUB = str.maketrans("0123456789+-−=()n", "₀₁₂₃₄₅₆₇₈₉₊₋₋₌₍₎ₙ")
+SUP = str.maketrans("0123456789+-−=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻⁼⁽⁾ⁿ")
+_SCRIPTABLE = re.compile(r"^[0-9+\-−=()n]{1,4}$")
+
+
+def _line_main(line):
+    """The size most of a line is printed in, and where its baseline sits."""
+    by_size: Dict[float, int] = {}
+    for sp in line.get("spans", []):
+        n = len((span_text(sp) or "").strip())
+        if n:
+            s = round(float(sp.get("size", 0)), 1)
+            by_size[s] = by_size.get(s, 0) + n
+    if not by_size:
+        return 0.0, 0.0
+    main = max(by_size, key=by_size.get)
+    ys = sorted(float((sp.get("origin") or (0, 0))[1]) for sp in line.get("spans", [])
+                if round(float(sp.get("size", 0)), 1) == main and (span_text(sp) or "").strip())
+    return main, (ys[len(ys) // 2] if ys else 0.0)
+
+
+def _script(t: str, span, main: float, base: float) -> str:
+    """Small digits printed below the line are subscripts (H₂O, CO(NH₂)₂), above it superscripts (m², 10³).
+    Written as the real characters, so the meaning survives every later step: "1000 m2" read as a thousand metres
+    two, and "CO(NH2)2" lost its chemistry."""
+    s = t.strip()
+    size = float(span.get("size", 0))
+    if not main or not s or size > main * 0.82 or not _SCRIPTABLE.match(s):
+        return t
+    oy = float((span.get("origin") or (0, base))[1])
+    if oy > base + max(0.8, main * 0.08):
+        return t.replace(s, s.translate(SUB))
+    if oy < base - max(0.8, main * 0.08) or int(span.get("flags", 0)) & SUPER_FLAG:
+        return t.replace(s, s.translate(SUP))
+    return t
+
+
 def read_lines(page_dict) -> List[Line]:
     """Every text line on the page, in no particular order yet."""
     out: List[Line] = []
@@ -167,10 +210,12 @@ def read_lines(page_dict) -> List[Line]:
             bold_chars = 0
             total = 0
             colors: Dict[str, int] = {}
+            main_size, base = _line_main(line)
             for span in line.get("spans", []):
                 t = span_text(span)
                 if not t:
                     continue
+                t = _script(t, span, main_size, base)
                 font = span.get("font", "") or ""
                 sbb = tuple(span.get("bbox") or (0, 0, 0, 0))
                 if _is_dingbat(font):
@@ -551,6 +596,9 @@ def _norm(s: str) -> str:
 # Grouping  (rules 12, 17 to 20)
 # ---------------------------------------------------------------------------
 
+CAPTION_START = re.compile(r"^\s*(?:fig(?:ure)?\.?|table|chart|graph|map|plate)\s*\d+(?:\.\d+)*\b", re.I)
+
+
 def group_lines(lines: List[Line], lay: Layout, page_width: float,
                 cfg: Config) -> List[Group]:
     """Join lines into paragraphs, never across a column, box or band."""
@@ -564,10 +612,15 @@ def group_lines(lines: List[Line], lay: Layout, page_width: float,
 
     ordered = sorted(lines, key=lambda l: (l.band, l.box, l.column,
                                            round(l.y0, 1), round(l.x0, 1)))
+    # The full width of a line in each column or box: the widest line there.
+    measure: Dict[tuple, float] = {}
+    for l in ordered:
+        k = (l.band, l.box, l.column)
+        measure[k] = max(measure.get(k, 0.0), l.width)
     groups: List[Group] = []
     for l in ordered:
         if not l.is_title and groups and _joins(groups[-1], l, lay,
-                                                page_width, cfg):
+                                                page_width, cfg, measure.get((l.band, l.box, l.column), 0.0)):
             groups[-1].lines.append(l)
             continue
         g = Group(lines=[l], box=l.box, band=l.band, column=l.column)
@@ -577,7 +630,7 @@ def group_lines(lines: List[Line], lay: Layout, page_width: float,
 
 
 def _joins(g: Group, l: Line, lay: Layout, page_width: float,
-           cfg: Config) -> bool:
+           cfg: Config, measure: float = 0.0) -> bool:
     prev = g.lines[-1]
     if g.is_title:
         return False
@@ -599,8 +652,24 @@ def _joins(g: Group, l: Line, lay: Layout, page_width: float,
         return False
     if SECTION_START.match(l.text):
         return False
+    # A numbered caption ("Figure 1.2 ...", "Table 3.1 ...") is its own paragraph: it starts one, and the body text
+    # printed under it does not join it. Before this the next sentence was read as part of the caption, so it vanished
+    # from the page and the caption read "... of a plant The formula is ...".
+    if CAPTION_START.match(l.text):
+        return False
+    if CAPTION_START.match(g.lines[0].text):
+        nxt = l.text.lstrip()
+        return prev.text.rstrip().endswith("-") or bool(nxt) and (nxt[0].islower() or nxt[0] in ",);:")
 
     inside_narrow = _narrow_box(l.box, lay, page_width, cfg)
+    # A word list in a panel ("Keywords": Agriculture / Crop / Fertiliser ...): each line is short, stops well before
+    # the edge, does not end a sentence or a phrase, and the next starts with a capital. Those are separate items,
+    # not one wrapped paragraph. They were joined into "Agriculture Crop Fertiliser Harvesting ...".
+    room = lay.boxes[l.box].width if 0 <= l.box < len(lay.boxes) else page_width * 0.5
+    nxt0 = l.text.lstrip()[:1]
+    if (prev.width < room * 0.45 and l.width < room * 0.45 and nxt0.isupper()
+            and not prev.text.rstrip().endswith(("-", ",", "and", "or", "of", "the"))):
+        return False
     if inside_narrow:
         return True                        # rule 12
 
@@ -610,8 +679,11 @@ def _joins(g: Group, l: Line, lay: Layout, page_width: float,
     if prev_text.endswith(SENTENCE_END):
         # a new sentence still continues the same paragraph when the line is
         # full width and the next one starts at the paragraph's left edge
+        # Measured against the column, not the paragraph so far: a one-line paragraph is always "full" against itself,
+        # so two separate formula lines ("Urea is ...", "Area of the field = ...") were joined.
+        full = max(measure, g.bbox()[2] - g.bbox()[0])
         return (abs(l.x0 - g.x0) <= 4.0
-                and prev.width > (g.bbox()[2] - g.bbox()[0]) * 0.75)
+                and prev.width > full * 0.75)
     nxt = l.text.lstrip()
     if not nxt:
         return False
@@ -654,11 +726,28 @@ def order_groups(groups: List[Group], lay: Layout) -> List[Group]:
         if cur is None or key < cur:
             box_start[g.box] = key
 
+    # A narrow panel standing beside the text (a Keywords or Remember strip in
+    # the margin) is read after the text it stands beside, not before it just
+    # because its top edge is a little higher.
+    xs = [g.x0 for g in groups] + [g.x1 for g in groups]
+    left, right = (min(xs), max(xs)) if xs else (0.0, 1.0)
+    span = max(1.0, right - left)
+    side: Dict[int, bool] = {}
+    for bi in box_start:
+        mem = [g for g in groups if g.box == bi]
+        bx0, bx1 = min(g.x0 for g in mem), max(g.x1 for g in mem)
+        by0, by1 = min(g.y0 for g in mem), max(g.y1 for g in mem)
+        beside = [g for g in groups if g.box < 0 and g.x1 <= bx0 + 2
+                  and g.y0 < by1 and g.y1 > by0]
+        side[bi] = (bx1 - bx0) < 0.4 * span and bx0 > left + 0.5 * span and bool(beside)
+
     def sort_key(g: Group):
         if g.box >= 0:
             band, y0, x0 = box_start[g.box]
             band_col = lay.bands[band].column_of(
                 (x0, y0, x0 + 1, y0 + 1)) if band < len(lay.bands) else 0
+            if side.get(g.box):
+                band_col = 99
             # a box is one unit placed where it starts, ordered internally
             return (band, band_col, y0, 0, g.y0, g.x0)
         return (g.band, g.column, g.y0, 1, g.y0, g.x0)

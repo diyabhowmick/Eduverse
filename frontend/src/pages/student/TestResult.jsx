@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../api'
-import { Ring, Icon, plural } from '../../ui'
+import { Ring, Icon, plural, BookImg } from '../../ui'
 import { callName } from '../../callname'
 import { EddieBot } from '../../Eddie'
 import { useEddieChat, AskBar, Talk, Tools } from '../../EddieBuddy'
@@ -33,7 +33,7 @@ function QReview({ q, bid, open }) {
     <button type="button" className="rq-h" onClick={() => setO(!o)} aria-expanded={o}>
       <span className="rq-mark">{q.correct ? <Icon n="check" s={14} /> : '✕'}</span><span className="rq-t">{q.why && <em className={'why ' + q.why}>{{ mistake: 'Revision', reading: 'From your reading', new: 'New' }[q.why]}</em>}{q.text}</span><span className="bd-go">{o ? '−' : '+'}</span></button>
     {o && <div className="rq-b">
-      {q.figure?.image && <img className="tq-fig" src={`/api/content/${bid}/${q.figure.image}`} alt="" />}
+      {q.figure?.image && <BookImg className="tq-fig" src={`/api/content/${bid}/${q.figure.image}`} alt="" />}
       {!q.correct && <div>Your answer: <b className="bad">{q.your_text || 'left blank'}</b></div>}
       <div>Right answer: <b className="good">{q.right_text}</b></div>
       {q.source && <div className="tq-src"><b>Your book says:</b> {q.source}</div>}
@@ -131,7 +131,7 @@ export default function TestResult() {
             <Tools c={c} replay={() => c.talk(c.say, { log: false })} /></div>
 
           {mode === 'teach' && q && <div className="tr-q">
-            {q.figure?.image && <img className="tq-fig" src={`/api/content/${r.book_id}/${q.figure.image}`} alt={q.figure.caption || ''} />}
+            {q.figure?.image && <BookImg className="tq-fig" src={`/api/content/${r.book_id}/${q.figure.image}`} alt={q.figure.caption || ''} />}
             <div className="tr-qt">{q.text}</div>
             {q.options.length ? <div className="tr-opts">{q.options.map(o => <span key={o.key} className={o.key === q.answer ? (explained ? 'right' : '') : o.key === q.your ? 'yours' : ''}>
               <b>{o.key.toUpperCase()}</b>{o.text}{o.key === q.your && <em>your answer</em>}{explained && o.key === q.answer && <em>right answer</em>}</span>)}</div>
@@ -158,7 +158,7 @@ export default function TestResult() {
               </div>
               : <div className="tr-check">
                 <div className="k">{check.same ? 'Same question, no peeking' : 'A similar question'}</div>
-                {check.q.figure?.image && <img className="tq-fig" src={`/api/content/${r.book_id}/${check.q.figure.image}`} alt="" />}
+                {check.q.figure?.image && <BookImg className="tq-fig" src={`/api/content/${r.book_id}/${check.q.figure.image}`} alt="" />}
                 <div className="tr-qt">{check.q.text}</div>
                 {check.q.options.length ? <div className="ct-opts">{check.q.options.map(o => {
                   const res = check.result, mine = check.answer === o.key

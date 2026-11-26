@@ -116,6 +116,20 @@ def book(bid: int, db: Session = Depends(get_db), me=Depends(reviewer)):
             "review_note": b.review_note, "reviewed_by": b.reviewed_by, "reviewed_at": b.reviewed_at}
 
 
+def _has_pdf_page(b, page: int) -> bool:
+    """The printed page is shown whenever the upload is a PDF. A render that fails once (two
+    requests drawing the same page at the same moment) is tried again rather than quietly
+    falling back to the M1 text."""
+    if not (b.original_key or "").lower().endswith(".pdf"):
+        return False
+    for _ in range(2):
+        try:
+            return bool(C.original_page_png(b, page))
+        except Exception:
+            continue
+    return False
+
+
 @router.get("/books/{bid}/pages/{page}")
 def page(bid: int, page: int, db: Session = Depends(get_db), me=Depends(reviewer)):
     b = get_book(db, bid, me)
@@ -123,7 +137,7 @@ def page(bid: int, page: int, db: Session = Depends(get_db), me=Depends(reviewer
     flow = C.load_extra(b, "flow_pages.json") or {}
     rep = C.load_extra(b, "report.json") or {}
     r = db.get(ReviewPage, (bid, page))
-    return {**C.page_view(data, page), "original": {"pdf": bool(C.original_page_png(b, page)) if b.original_key.lower().endswith(".pdf") else False,
+    return {**C.page_view(data, page), "original": {"pdf": _has_pdf_page(b, page),
                                                    "flow": flow.get(str(page), [])},
             "flags": [f for f in rep.get("needs_review", []) if f["page"] == page],
             "removed": [l for l in C.ledger(b) if l.get("page") == page and "removed" in l.get("what", "")],
@@ -133,7 +147,16 @@ def page(bid: int, page: int, db: Session = Depends(get_db), me=Depends(reviewer
 
 
 @router.get("/books/{bid}/pages/{page}/original.png")
-def original_png(bid: int, page: int, db: Session = Depends(get_db)):
+def original_png(bid: int, page: int, request: Request, db: Session = Depends(get_db)):
+    """A page of the uploaded original, for the review screen. Staff only: it is the whole printed page.
+    It used to answer anyone, signed in or not."""
+    from ..security import user_from_token, COOKIE
+    auth = request.headers.get("authorization", "")
+    tok = auth[7:] if auth.lower().startswith("bearer ") else request.cookies.get(COOKIE, "")
+    if not tok:
+        raise HTTPException(401, "Sign in required")
+    if user_from_token(tok, db).role not in ("reviewer", "super_admin"):
+        raise HTTPException(403, "Not allowed for your role")
     png = C.original_page_png(get_book(db, bid), page)
     if not png:
         raise HTTPException(404, "No original PDF page")
@@ -444,7 +467,9 @@ def publish(bid: int, body: Decision, db: Session = Depends(get_db), me=Depends(
         raise HTTPException(409, block)
     b.status, b.live_at, b.live_key = "live", datetime.utcnow(), b.content_key
     b.reviewed_by, b.reviewed_at, b.review_note = me.email, datetime.utcnow(), body.comment.strip()
-    log(db, me, "review.publish", "book", bid, title=b.title, pages=p["total"])
+    from .tests import draft_on_publish
+    drafted = draft_on_publish(db, b)
+    log(db, me, "review.publish", "book", bid, title=b.title, pages=p["total"], test_drafts=drafted)
     db.commit()
     return {"status": b.status}
 
@@ -483,7 +508,7 @@ def content_file(bid: int, path: str, request: Request, t: str = "", db: Session
     (session cookie or Authorization header) and allowed to see this book, or carry a signed link from the server."""
     from .. import hardening as H
     from ..security import user_from_token, COOKIE
-    if not (path.startswith("images/") or path.startswith("flow_images/")) or ".." in path:
+    if not (path.startswith("images/") or path.startswith("flow_images/") or path.startswith("layout/")) or ".." in path:
         raise HTTPException(404, "Not found")
     b = db.get(Book, bid)
     if not b or not b.content_key:
@@ -503,14 +528,26 @@ def content_file(bid: int, path: str, request: Request, t: str = "", db: Session
             if url:
                 return RedirectResponse(url, status_code=302, headers={"Cache-Control": "private, max-age=600"})
         raise HTTPException(404, "Not found")
-    data = None
+    data, found = None, None
     for key in dict.fromkeys(k for k in (b.content_key, b.live_key) if k):  # the version in review, then the live one
         try:
-            data = C._store().get(f"{key}/{path}"); break
+            data = C._store().get(f"{key}/{path}"); found = f"{key}/{path}"; break
         except Exception:
             continue
     if data is None:
         raise HTTPException(404, "Not found")
-    ext = path.rsplit(".", 1)[-1].lower()
-    return Response(data, media_type={"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml"}.get(ext, "application/octet-stream"),
+    if path.startswith("layout/"):   # Page view: the page image and the text positions, as stored
+        mt = "application/json" if path.endswith(".json") else "image/webp" if path.endswith(".webp") else "application/octet-stream"
+        return Response(data, media_type=mt, headers={"Cache-Control": "private, max-age=86400"})
+    from eduverse_convert.webimage import sniff, to_web
+    kind = sniff(data)
+    if kind not in ("png", "jpg", "gif", "webp", "svg"):
+        # Books converted before v47 kept TIFF, BMP, EMF and WMF pictures under a .png name, which no browser draws.
+        # Convert once and store the PNG in its place, so the next request is a plain read.
+        data, kind, _problem = to_web(data)
+        try:
+            C._store().put(found, data)
+        except Exception:
+            pass
+    return Response(data, media_type={"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"}.get(kind, "application/octet-stream"),
                     headers={"Cache-Control": "private, max-age=3600"})

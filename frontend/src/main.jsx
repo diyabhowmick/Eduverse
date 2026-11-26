@@ -6,4 +6,10 @@ import './styles.css'
 import './polish.css'
 import './ux.css'
 import './motion.css'
-createRoot(document.getElementById('root')).render(<BrowserRouter><App /></BrowserRouter>)
+import ErrorBoundary, { isChunkError, reloadOnce, report } from './ErrorBoundary'
+
+// A deploy renames the screen files. Vite raises this when a tab opened before the deploy asks for one that is gone:
+// load the new version instead of showing a blank page.
+window.addEventListener('vite:preloadError', e => { if (reloadOnce()) e.preventDefault() })
+window.addEventListener('unhandledrejection', e => { if (isChunkError(e.reason)) reloadOnce(); else report(e.reason, 'promise ' + location.pathname) })
+createRoot(document.getElementById('root')).render(<BrowserRouter><ErrorBoundary where="app"><App /></ErrorBoundary></BrowserRouter>)

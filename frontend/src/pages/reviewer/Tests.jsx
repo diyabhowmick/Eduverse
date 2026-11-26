@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../api'
-import { useLoad, Page, Tag, Modal, Field, useToast, plural } from '../../ui'
+import { useLoad, Page, Tag, Modal, Field, useToast, plural, BookImg } from '../../ui'
 import '../../tests.css'
 
 const LEVEL = { easy: 'Easy', medium: 'Medium', hard: 'Hard' }
@@ -57,7 +57,7 @@ function QCard({ q, n, bid, onChange, onEdit }) {
       {q.origin === 'ai' && <span className="tag">Written by AI</span>}{q.origin === 'human' && <span className="tag">Written by a reviewer</span>}
       {q.section_title && <span className="muted" style={{ fontSize: 12 }}>{q.section_title}</span>}
       <span style={{ marginLeft: 'auto' }}>{q.status === 'approved' ? <Tag s="live">Approved</Tag> : <Tag s="processing">Waiting</Tag>}</span></div>
-    {q.figure?.image && <img className="tq-fig" src={`/api/content/${bid}/${q.figure.image}`} alt={q.figure.caption || ''} />}
+    {q.figure?.image && <BookImg className="tq-fig" src={`/api/content/${bid}/${q.figure.image}`} alt={q.figure.caption || ''} />}
     <div className="tq-t">{q.text}</div>
     {q.options.length > 0 ? <ol className="tq-o">{q.options.map(o => <li key={o.key} className={o.key === q.answer ? 'right' : ''}><span>{o.key}</span>{o.text}</li>)}</ol>
       : <div className="tq-a">Answer: <b>{q.answer.split('|').join(' or ')}</b></div>}

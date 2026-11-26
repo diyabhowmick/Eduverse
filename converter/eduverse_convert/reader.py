@@ -7,6 +7,7 @@ from .omml import M, to_latex, plain, spaces_lost
 
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 def _style(p):
@@ -65,6 +66,7 @@ def read(path):
     body = doc.element.body
     out, page = [], 0
     images = {}
+    panel, last_rule = 0, None   # M1 rules every paragraph of a printed box; the rule colour alternates per box
     for el in body.iterchildren():
         tag = el.tag.split("}")[1]
         if tag == "p":
@@ -83,7 +85,8 @@ def read(path):
                     part = rels[rid].target_part
                     data = part.blob
                     h = hashlib.sha1(data).hexdigest()[:12]
-                    ext = part.partname.ext or "png"
+                    from .webimage import to_web
+                    data, ext, _problem = to_web(data)   # a TIFF, BMP, EMF or WMF is stored as a PNG a browser can draw
                     images[h] = (data, ext)
                     ext_el = None
                     for e in el.iter("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"):
@@ -92,6 +95,16 @@ def read(path):
                     drawings.append({"hash": h, "ext": ext, "size": size})
             maths = list(el.iter(M + "oMath"))
             item = {"kind": "p", "style": style, "text": text, "bold": bold, "page": page}
+            rule = None
+            for top in el.iterfind(f"{W}pPr/{W}pBdr/{W}top"):
+                rule = (top.get(W + "color") or "").upper()
+            if rule in ("B9A57E", "B9A57F"):
+                if rule != last_rule:
+                    panel += 1
+                item["panel"] = panel
+                last_rule = rule
+            elif text.strip() or drawings:
+                last_rule = None
             if drawings:
                 item["drawings"] = drawings
             if maths:
@@ -107,4 +120,39 @@ def read(path):
                 out.append({"kind": "desc", "desc": parse_description(rows[0][0]), "page": page})
             else:
                 out.append({"kind": "table", "rows": rows, "page": page})
-    return out, images
+    return match_columns(out), images
+
+
+COL_HEAD = re.compile(r"^(?:column\s*)?(?:[A-Z]|I{1,3}|IV)$", re.I)
+
+
+def match_columns(items):
+    """A "match the following" pair of columns printed without rules comes out
+    of M1 row by row as loose short lines: A, B, item, item, item, item. Put
+    them back into a two column table so a student sees what pairs with what."""
+    out, i = [], 0
+    while i < len(items):
+        a = items[i]; b = items[i + 1] if i + 1 < len(items) else None
+        if (b and a["kind"] == b["kind"] == "p" and not a.get("drawings") and not b.get("drawings")
+                and COL_HEAD.match(a["text"].strip()) and COL_HEAD.match(b["text"].strip())
+                and a["text"].strip().lower() != b["text"].strip().lower()):
+            j = i + 2
+            while j < len(items):
+                x = items[j]
+                tx = (x.get("text") or "").strip()
+                if x["kind"] != "p" or x.get("drawings") or x.get("math") or not tx or len(tx) > 60 \
+                        or tx.endswith((".", "?", ":")) or x.get("style") in ("EVH1", "EVH2", "EVH3") \
+                        or x.get("panel") != a.get("panel"):
+                    break
+                j += 1
+            cells = [items[k]["text"].strip() for k in range(i + 2, j)]
+            if len(cells) % 2:
+                cells = cells[:-1]; j -= 1
+            if len(cells) >= 4:
+                rows = [[a["text"].strip(), b["text"].strip()]] + [cells[k:k + 2] for k in range(0, len(cells), 2)]
+                t = {"kind": "table", "rows": rows, "page": a["page"]}
+                if a.get("panel") is not None:
+                    t["panel"] = a["panel"]
+                out.append(t); i = j; continue
+        out.append(a); i += 1
+    return out

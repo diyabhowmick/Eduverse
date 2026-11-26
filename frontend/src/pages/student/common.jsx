@@ -1,3 +1,4 @@
+import '../../study.css'
 import { Link } from 'react-router-dom'
 import { Ring } from '../../ui'
 import Book3D, { PaperStack } from '../../Book3D'

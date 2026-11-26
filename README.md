@@ -1,3 +1,7 @@
+> **v48:** Page view (the printed page with selectable text), the page check, one picture per printed figure, reviewer crop tools. See the top of CHANGES.md.
+>
+> **v47:** fixes from the full test audit.
+>
 > **v6:** textbooks and exam packs, individual sign up (B2C), organisations (B2B). See TRACKS.md.
 
 # EduVerse: Super Admin, School Admin, Reviewer and Student

@@ -26,6 +26,36 @@ def shrink(blob, ext):
         return blob
 
 
+def join_split_tables(blocks) -> int:
+    """A table that runs onto the next page is printed as two pieces. Join them: the second piece follows the first
+    directly, starts on a later page, and has the same number of columns. Its first row is a data row (it was being
+    shown as a header), unless the book repeated the header row, which is then dropped."""
+    n, i = 0, 0
+    while i < len(blocks) - 1:
+        a, b = blocks[i], blocks[i + 1]
+        if a.get("type") == "box":
+            n += join_split_tables(a.get("children") or [])
+        if (a.get("type") == "table" and b.get("type") == "table" and a.get("rows") and b.get("rows")
+                and (b.get("page") or 0) > (a.get("page") or 0) and not (a.get("number") and b.get("number"))
+                and len(a["rows"][0]) == len(b["rows"][0])):
+            rows = b["rows"]
+            if a.get("header") and [c.strip().lower() for c in rows[0]] == [c.strip().lower() for c in a["rows"][0]]:
+                rows = rows[1:]
+            a["rows"] = a["rows"] + rows
+            if not a.get("number") and b.get("number"):   # the caption was printed under the second piece
+                for k in ("number", "label", "caption"):
+                    if b.get(k):
+                        a[k] = b[k]
+            a["pages"] = sorted({a.get("page"), b.get("page")} | set(a.get("pages") or []))
+            del blocks[i + 1]
+            n += 1
+            continue
+        i += 1
+    if blocks and blocks[-1].get("type") == "box":
+        n += join_split_tables(blocks[-1].get("children") or [])
+    return n
+
+
 def convert(src, out, llm=None, model=None, base_url=None, api_key=None, log=print):
     src, out = Path(src), Path(out)
     t0 = time.time()
@@ -40,6 +70,11 @@ def convert(src, out, llm=None, model=None, base_url=None, api_key=None, log=pri
     book["book"]["source_file"] = src.name
     used = set()
     llm_notes = {}
+    joined_tables = 0
+    for ch in book["chapters"]:
+        joined_tables += join_split_tables(ch["blocks"])
+    if joined_tables:
+        ledger.append({"page": 0, "what": f"{joined_tables} table(s) that ran onto the next page were joined back into one", "text": ""})
     for ch in book["chapters"]:
         terms = select(ch)
         if llm:

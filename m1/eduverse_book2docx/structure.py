@@ -16,7 +16,7 @@ from .schema import Block, Page, Run
 from .textclean import font_family, is_light
 
 BULLET_RE = re.compile(r"^\s*([\u2022\u25cf\u25aa\u2023\u2043\-\*\u00b7])\s+")
-NUMBER_RE = re.compile(r"^\s*(\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])[\.\)]\s+")
+NUMBER_RE = re.compile(r"^\s*(?:\((?:\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])\)|(?:\d{1,2}|[ivxlIVXL]{1,5}|[a-zA-Z])[\.\)])\s+")  # 1.  a)  (a)  (iv)
 SECTION_RE = re.compile(r"^\s*(\d{1,2}(?:\.\d{1,2}){0,3})\s+\S")
 FURNITURE_RE = re.compile(
     r"^\s*(?:page\s*)?\d{1,4}\s*$|^\s*[-\u2013]\s*\d{1,4}\s*[-\u2013]\s*$",

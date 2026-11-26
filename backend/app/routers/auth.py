@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
@@ -14,14 +15,17 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _DUMMY = hash_pw("not-a-real-password-just-for-timing")
 LOCK_AFTER, LOCK_MIN = 8, 15
-WRONG = "Email or password is wrong"
+WRONG = "Email or password is wrong, or this is not the sign-in page for your account"
 
 
 @router.post("/login")
 def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
     email = body.email.lower().strip()
     ip = H.client_ip(request)
-    H.guard("login-ip:" + ip, 30, 600)
+    # A whole school signs in from one address (one internet connection). 30 an address per 10 minutes let 30 of a
+    # school's students in and locked the rest out for the period. Guessing is stopped per account instead
+    # (12 tries an email per 15 minutes, and 8 wrong passwords lock the account).
+    H.guard("login-ip:" + ip, int(os.getenv("LOGIN_PER_IP_10MIN", "600")), 600)
     H.guard("login-email:" + email, 12, 900)
     user = db.query(User).filter(User.email == email).first()
     if not user:
@@ -37,7 +41,8 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         db.commit()
         raise HTTPException(401, WRONG)
     if user.role != body.portal:
-        raise HTTPException(403, "This account cannot sign in here. Use your own login page.")
+        # Same answer as a wrong password. A different answer told anyone guessing that the password was right.
+        raise HTTPException(401, WRONG)
     if user.status != "active":
         raise HTTPException(403, "This account is suspended")
     # Organisation accounts need an active organisation. An individual learner (B2C) has none, and needs none.
@@ -99,7 +104,8 @@ def refresh(request: Request, response: Response, user: User = Depends(current_u
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(COOKIE, path="/api/content")
+    response.delete_cookie(COOKIE, path="/api")
+    response.delete_cookie(COOKIE, path="/api/content")   # set by builds before v48
     return {"ok": True}
 
 

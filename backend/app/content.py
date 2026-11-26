@@ -59,10 +59,37 @@ def load(book: Book, key: str | None = None) -> dict:
         return json.loads(_store().get((key or book.content_key) + "/book.json"))
     except FileNotFoundError:
         raise ContentMissing(book)
+    except Exception as e:  # S3 says NoSuchKey instead of FileNotFoundError
+        if "NoSuchKey" in str(e) or "Not Found" in str(e) or "404" in str(e):
+            raise ContentMissing(book)
+        raise
+
+
+# Read-only copies of books, kept in memory for a minute. A reading student saves progress every 30 seconds and opens
+# Home and the book now and then; each of those used to read and parse the whole book file (about 1 MB for a 300-page
+# book) from storage. Never change what load_ro returns: it is shared. Reviewer edits use load() and save().
+_RO: dict = {}
+_RO_TTL = 60
+_RO_MAX = 12
+
+
+def load_ro(book: Book, key: str | None = None) -> dict:
+    import time
+    k = key or book.content_key
+    hit = _RO.get(k)
+    now = time.time()
+    if hit and now - hit[0] < _RO_TTL:
+        return hit[1]
+    data = load(book, k)
+    if len(_RO) >= _RO_MAX:
+        _RO.pop(min(_RO, key=lambda x: _RO[x][0]), None)
+    _RO[k] = (now, data)
+    return data
 
 
 def save(book: Book, data: dict):
     _store().put(book.content_key + "/book.json", json.dumps(data, ensure_ascii=False).encode())
+    _RO.pop(book.content_key, None)
 
 
 def load_extra(book: Book, name: str):
@@ -134,9 +161,13 @@ def ingest_flow(db: Session, book: Book, flow_bytes: bytes, log=lambda *a: None)
     book.edition = book.edition or b.get("edition", "")
     book.fingerprint = b.get("fingerprint", {}).get("text_sha256", "")[:64]
     db.query(ReviewPage).filter(ReviewPage.book_id == book.id).delete()
-    for p in page_numbers(data):
+    # Every page of the original with content gets a review page, even when all of its text was joined onto the
+    # page before (a paragraph that runs over). Before, such a page had no review page, so Publish refused the
+    # book as "pages not in the digital book" with nothing the reviewer could do about it.
+    review = sorted(set(page_numbers(data)) | {int(p) for p, items in pages.items() if items})
+    for p in review:
         db.add(ReviewPage(book_id=book.id, page=p))
-    book.pages = max(book.pages or 0, len(page_numbers(data)))
+    book.pages = max(book.pages or 0, len(review))
     return report
 
 
@@ -229,6 +260,6 @@ def original_page_png(book: Book, page: int) -> bytes | None:
     doc = pymupdf.open(stream=store.get(book.original_key), filetype="pdf")
     if page < 1 or page > doc.page_count:
         return None
-    png = doc[page - 1].get_pixmap(dpi=110).tobytes("png")
+    png = doc[page - 1].get_pixmap(dpi=160).tobytes("png")
     store.put(key, png)
     return png

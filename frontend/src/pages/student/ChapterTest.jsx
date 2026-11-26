@@ -3,7 +3,7 @@ import { NotSure } from './common'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../api'
-import { Icon, plural } from '../../ui'
+import { Icon, plural, BookImg } from '../../ui'
 import { EddieBot } from '../../Eddie'
 import { speak, hush } from '../../voice'
 import { sound } from '../../sound'
@@ -79,7 +79,7 @@ export default function ChapterTest() {
       <div className="ct-q card">
         <div className="ct-qn">{q.why && <em className={'why ' + q.why}>{{ mistake: 'From your revision list', reading: 'From your reading', new: 'New' }[q.why]}</em>}Question {i + 1} of {n}{q.section_title && <span> · {q.section_title}</span>}
           <button type="button" className="ct-read" onClick={() => readQ(q)} title="Read it to me" aria-label="Read the question to me"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></svg></button></div>
-        {q.figure?.image && <figure className="ct-fig"><img src={`/api/content/${bid}/${q.figure.image}`} alt={q.figure.caption || ''} />
+        {q.figure?.image && <figure className="ct-fig"><BookImg src={`/api/content/${bid}/${q.figure.image}`} alt={q.figure.caption || ''} />
           {(q.figure.number || q.figure.caption) && <figcaption>{q.figure.number && <b>Figure {q.figure.number} </b>}{q.figure.caption}</figcaption>}</figure>}
         <div className="ct-text">{q.text}</div>
         {q.options.length ? <div className="ct-opts">{q.options.map(o =>

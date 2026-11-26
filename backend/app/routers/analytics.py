@@ -62,7 +62,7 @@ def dashboard(db: Session = Depends(get_db), _=Depends(super_admin)):
             "suspended_schools": sum(1 for s in schools if s.status == "suspended"),
             "open_requests": db.query(SchoolRequest).filter(SchoolRequest.status == "open").count(),
         },
-        "recent": [{"at": a.at, "actor": a.actor_email, "action": a.action, "target": f"{a.target_type} {a.target_id}", "detail": a.detail}
+        "recent": [{"at": a.at, "actor": a.actor_email, "action": a.action, "target": _readable_target(db, a), "detail": a.detail}
                    for a in db.query(AuditLog).order_by(AuditLog.at.desc()).limit(8).all()],
     }
 
@@ -84,3 +84,21 @@ def audit(q: str = "", action: str = "", limit: int = 200, db: Session = Depends
     return [{"id": a.id, "at": a.at, "actor": a.actor_email, "role": a.actor_role, "action": a.action,
              "target_type": a.target_type, "target_id": a.target_id, "detail": a.detail}
             for a in query.order_by(AuditLog.at.desc()).limit(min(limit, 1000)).all()]
+
+
+def _readable_target(db, a) -> str:
+    """"user 1018" means nothing on a dashboard: name the person, book or school instead."""
+    from ..models import Book, School, User
+    try:
+        tid = int(a.target_id) if a.target_id not in (None, "") else None
+    except (TypeError, ValueError):
+        tid = None
+    model = {"user": User, "book": Book, "school": School}.get(a.target_type or "")
+    obj = db.get(model, tid) if model and tid is not None else None
+    if obj is not None:
+        if isinstance(obj, User):
+            return obj.name or obj.email
+        return getattr(obj, "title", None) or getattr(obj, "name", None) or f"{a.target_type} {a.target_id}"
+    if a.actor_email and (a.action or "").startswith("auth"):
+        return a.actor_email
+    return f"{a.target_type or ''} {a.target_id or ''}".strip()

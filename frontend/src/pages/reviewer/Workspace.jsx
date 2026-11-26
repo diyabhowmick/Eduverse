@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
+import CropTool from './CropTool'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { api, auth } from '../../api'
-import { Modal, Field, useToast, Icon, ask } from '../../ui'
+import { Modal, Field, useToast, Icon, ask, BookImg } from '../../ui'
+import { listShape } from '../../listlabels'
 
 const tex = l => { try { return katex.renderToString(l, { displayMode: true, throwOnError: false }) } catch { return l } }
 
@@ -35,9 +37,9 @@ function FigureM2({ b, bookId, act }) {
   const pill = !made ? null : m.choice === 'pending' ? <span className="tag warn">Choose one</span> : m.choice === 'generated' ? <span className="tag ok">New picture in use</span> : <span className="tag">Original in use</span>
   return <>
     {made ? <div className="m2-cmp">
-      <figure className={m.choice === 'original' ? 'on' : ''}><figcaption>Original from the book</figcaption><img src={`/api/content/${bookId}/${m.original}`} alt="Original figure" /></figure>
-      <figure className={m.choice === 'generated' ? 'on' : ''}><figcaption>{m.method === 'enhance' ? 'Original, cleaned up' : m.mode === 'replica' ? 'Exact clean copy' : 'New, from the description'}<span className="muted">{METHOD[m.method] || m.method}{m.model ? ' ' + m.model : ''}</span></figcaption><img src={`/api/content/${bookId}/${m.image}`} alt="Regenerated figure" /></figure>
-    </div> : <img className="rv-img" src={`/api/content/${bookId}/${b.image}`} alt="" />}
+      <figure className={m.choice === 'original' ? 'on' : ''}><figcaption>Original from the book</figcaption><BookImg src={`/api/content/${bookId}/${m.original}`} alt="Original figure" /></figure>
+      <figure className={m.choice === 'generated' ? 'on' : ''}><figcaption>{m.method === 'enhance' ? 'Original, cleaned up' : m.mode === 'replica' ? 'Exact clean copy' : 'New, from the description'}<span className="muted">{METHOD[m.method] || m.method}{m.model ? ' ' + m.model : ''}</span></figcaption><BookImg src={`/api/content/${bookId}/${m.image}`} alt="Regenerated figure" /></figure>
+    </div> : <BookImg className="rv-img" src={`/api/content/${bookId}/${b.image}`} alt="" />}
     <div className="m2-bar">{pill}
       {made && m.choice !== 'generated' && <button className="btn primary sm" onClick={() => choose('generated')}>Use new picture</button>}
       {made && m.choice !== 'original' && <button className="btn sm" onClick={() => choose('original')}>Keep original</button>}
@@ -51,17 +53,21 @@ function FigureM2({ b, bookId, act }) {
   </>
 }
 
-function Block({ b, kws, bookId, onChange, onRemove, act }) {
+function Block({ b, kws, bookId, onChange, onRemove, act, onMove, onCrop }) {
   const save = body => onChange(b.id, body)
-  const tools = <button className="rv-x" title="Remove this block" onClick={() => onRemove(b)}><Icon n="x" s={14} /></button>
+  const tools = <span className="rv-tools">
+    {onMove && <><button className="rv-mv" title="Move up: put the text back in the printed order" onClick={() => onMove(b, 'up')}>&#8593;</button>
+      <button className="rv-mv" title="Move down" onClick={() => onMove(b, 'down')}>&#8595;</button></>}
+    <button className="rv-x" title="Remove this block" onClick={() => onRemove(b)}><Icon n="x" s={14} /></button></span>
   const wrap = (inner, cls = '') => <div className={'rv-block ' + cls} data-edited={b.edits?.length ? '1' : undefined}>{tools}{inner}{b.edits?.length ? <span className="rv-edited">edited</span> : null}</div>
   switch (b.type) {
     case 'heading': return wrap(<Editable value={b.text} multiline={false} onSave={t => save({ text: t })}><div className={b.level === 3 ? 'rv-h3' : 'rv-h2'}>{b.number && <span className="n">{b.number}</span>}{b.text}</div></Editable>)
     case 'subheading': return wrap(<Editable value={b.text} multiline={false} onSave={t => save({ text: t })}><b>{b.text}</b></Editable>)
     case 'paragraph': return wrap(<Editable value={b.text} onSave={t => save({ text: t })}><p><Marked text={b.text} marks={b.marks} kws={kws} /></p></Editable>)
-    case 'list': { const L = b.ordered ? 'ol' : 'ul'; return wrap(<L>{b.items.map((it, i) => <li key={i}><Editable value={it.text} onSave={t => save({ text: t, item: i })}><Marked text={it.text} marks={it.marks} kws={kws} /></Editable></li>)}</L>) }
+    case 'list': { const L = b.ordered ? 'ol' : 'ul'; const sh = listShape(b.items); return wrap(<L className={sh.own ? 'own-labels' : undefined}>{b.items.map((it, i) => <li key={i} className={sh.sub[i] ? 'sub' : undefined}><Editable value={it.text} onSave={t => save({ text: t, item: i })}><Marked text={it.text} marks={it.marks} kws={kws} /></Editable></li>)}</L>) }
     case 'equation': return wrap(<Editable value={b.latex.join('\n')} onSave={t => save({ latex: t.split('\n') })}><div className="rv-eq" dangerouslySetInnerHTML={{ __html: b.latex.map(tex).join('') }} /></Editable>, 'eq')
     case 'figure': return wrap(<><FigureM2 b={b} bookId={bookId} act={act} />
+      {onCrop && <div className="m2-bar"><button className="btn sm" onClick={() => onCrop(b)} title="Cut off, too tight, in pieces or the wrong part: draw the right box on the printed page">Crop again on the original page</button></div>}
       <Editable value={b.caption || ''} multiline={false} onSave={t => save({ caption: t })}><div className="rv-cap">{b.number ? <b>Figure {b.number} </b> : null}{b.caption || <i className="muted">No caption</i>}</div></Editable>
       {b.desc ? <details className="rv-desc"><summary>Image description for the AI</summary>{b.desc.summary}</details> : <div className="tag warn">No description</div>}</>)
     case 'table': return wrap(<>
@@ -74,9 +80,12 @@ function Block({ b, kws, bookId, onChange, onRemove, act }) {
 }
 
 function Original({ bookId, page, orig }) {
-  if (orig.pdf) return <img className="rv-orig" src={`/api/review/books/${bookId}/pages/${page}/original.png`} alt={'Original page ' + page} />
+  const [zoom, setZoom] = useState(false)   // click the printed page to read fine print, subscripts and labels
+  useEffect(() => setZoom(false), [page])
+  if (orig.pdf) return <img className={'rv-orig' + (zoom ? ' zoom' : '')} src={`/api/review/books/${bookId}/pages/${page}/original.png`} alt={'Original page ' + page}
+    title={zoom ? 'Click to fit the page' : 'Click to zoom in'} onClick={() => setZoom(z => !z)} />
   return <div className="rv-flow">{orig.flow.map((e, i) => {
-    if (e.kind === 'image') return <img key={i} src={`/api/content/${bookId}/${e.src}`} alt="" />
+    if (e.kind === 'image') return <BookImg key={i} src={`/api/content/${bookId}/${e.src}`} alt="" />
     if (e.kind === 'table') return <table key={i} className="rv-table"><tbody>{e.rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{c}</td>)}</tr>)}</tbody></table>
     if (e.kind === 'desc') return <div key={i} className="rv-fdesc">{e.type}: {e.text}</div>
     if (e.kind === 'math') return <div key={i} className="rv-eq" dangerouslySetInnerHTML={{ __html: tex(e.latex) }} />
@@ -105,6 +114,7 @@ export default function Workspace() {
   const [reject, setReject] = useState(null); const [comment, setComment] = useState(''); const [cat, setCat] = useState(''); const [fix, setFix] = useState(''); const [word, setWord] = useState('')
   const [final, setFinal] = useState(null); const [note, setNote] = useState('')
   const [bookErr, setBookErr] = useState(''); const [pageErr, setPageErr] = useState('')
+  const [crop, setCrop] = useState(null)   // {mode: 'replace' | 'add', figure}
   const loadBook = useCallback(() => api('/api/review/books/' + id).then(b => { setBook(b); setPage(p => p ?? wanted ?? (b.pages.find(x => x.status !== 'approved') || b.pages[0])?.page) }), [id, wanted])
   const loadPage = useCallback(() => page != null && api(`/api/review/books/${id}/pages/${page}`).then(r => { setPageErr(''); setPg(r) }).catch(e => setPageErr(e.message || 'This page could not be loaded')), [id, page])
   useEffect(() => { loadBook().catch(e => { setBookErr(e.message || 'This book could not be loaded'); toast(e.message, true) }) }, [loadBook])
@@ -119,9 +129,13 @@ export default function Workspace() {
   const next = () => { const n = book.pages.slice(idx + 1).find(p => p.status !== 'approved') || book.pages[idx + 1]; if (n) setPage(n.page) }
   const act = async (fn, msg, after = () => {}) => { try { const r = await fn(); msg && toast(msg); await loadBook(); await loadPage(); after(r); return true } catch (e) { toast(e.message, true); return false } }
   const change = (bid, body) => act(() => api(`/api/review/books/${id}/blocks/${bid}`, { method: 'PATCH', body }), 'Saved')
+  const move = (b, dir) => act(() => api(`/api/review/books/${id}/blocks/${b.id}/move`, { method: 'POST', body: { dir } }), null)
   const remove = async b => (await ask('Remove this block from the digital book? The original stays in the source.', { yes: 'Remove' })) && act(() => api(`/api/review/books/${id}/blocks/${b.id}`, { method: 'DELETE' }), 'Block removed')
   const decide = (d, c = '', extra = {}) => act(() => api(`/api/review/books/${id}/pages/${page}/${d}`, { method: 'POST', body: { comment: c, ...extra } }), d === 'approve' ? `Page ${page} approved` : d === 'reject' ? `Page ${page} rejected` : 'Page reopened', () => d === 'approve' && next())
   const p = book.progress; const allOk = p.total && p.approved === p.total
+  const canCrop = book.status === 'in_review' && !!pg?.original?.pdf
+  const pageBlocks = pg ? pg.chapters.flatMap(c => c.blocks) : []
+  const pageFigs = []; const walkF = bs => bs.forEach(x => { if (x.type === 'figure') pageFigs.push(x); if (x.type === 'box') walkF(x.children) }); walkF(pageBlocks)
   const cur = book.pages[idx]
   return (
     <div className={'rv' + (book.status === 'in_review' ? '' : ' ro')}>
@@ -143,10 +157,13 @@ export default function Workspace() {
       <div className="rv-body">
         <nav className="rv-pages">{book.pages.map(x => <button key={x.page} className={'rv-p ' + x.status + (x.page === page ? ' cur' : '')} onClick={() => setPage(x.page)} title={`Page ${x.page}${x.flags ? `, ${x.flags} flagged` : ''}`}>
           {x.page}{x.choose ? <i className="m2" title={`${x.choose} pictures to choose`}>{x.choose}</i> : x.flags ? <i>{x.flags}</i> : null}</button>)}</nav>
-        <section className="rv-col"><div className="rv-colh">Original page {page}<span className="muted">{pg?.original.pdf ? 'Uploaded PDF' : 'M1 extraction'}</span></div>
+        <section className="rv-col"><div className="rv-colh">Original page {page}<span className="muted">{!pg ? '' : pg.original.pdf ? 'Uploaded PDF' : 'M1 extraction'}</span></div>
           <div className="rv-scroll">{pg ? <Original bookId={id} page={page} orig={pg.original} /> : <div className="empty">{pageErr ? 'Page ' + page + ' could not be loaded: ' + pageErr : 'Loading'}</div>}</div></section>
         <section className="rv-col"><div className="rv-colh">Digital book, page {page}<span className="muted">{pg?.chapters.map(c => (c.number ? `Unit ${c.number} ` : 'Opening pages: ') + c.title).join(', ')}</span></div>
-          <div className="rv-scroll rv-digital">{pg?.chapters.flatMap(c => c.blocks).map(b => <Block key={b.id} b={b} kws={kws} bookId={id} onChange={change} onRemove={remove} act={act} />)}
+          <div className="rv-scroll rv-digital">
+            {canCrop && <div className="rv-addpic"><button className="btn ghost sm" onClick={() => setCrop({ mode: 'add' })} title="A picture is missing, or one picture should be two">+ Add a picture from this page</button></div>}
+            {pg?.chapters.flatMap(c => c.blocks).map(b => <Block key={b.id} b={b} kws={kws} bookId={id} onChange={change} onRemove={remove} act={act}
+              onMove={book.status === 'in_review' ? move : null} onCrop={canCrop ? f => setCrop({ mode: 'replace', figure: f }) : null} />)}
             {pg && !pg.chapters.length && <div className="empty">This page has no reading content (front matter or removed items only)</div>}</div></section>
         <aside className="rv-side">
           <div className="rv-card"><div className="h">Page {page}</div>
@@ -169,6 +186,8 @@ export default function Workspace() {
           {pg?.removed.length > 0 && <div className="rv-card"><div className="h">Removed by the converter ({pg.removed.length})</div>{pg.removed.map((r, i) => <div key={i} className="rv-flag"><span className="muted">{r.what}:</span> {r.text || 'image'}</div>)}</div>}
         </aside>
       </div>
+      {crop && <CropTool bookId={id} page={page} mode={crop.mode} figure={crop.figure} figures={pageFigs} blocks={pageBlocks}
+        onClose={() => setCrop(null)} onDone={msg => { setCrop(null); toast(msg); loadBook(); loadPage() }} />}
       {reject != null && <Modal title={`Flag page ${reject}`} onClose={() => setReject(null)} footer={<><button className="btn" onClick={() => setReject(null)}>Cancel</button><button className="btn primary" onClick={async () => { if (await decide('reject', comment, { category: cat, rerun: fix })) setReject(null) }}>Flag and reject</button></>}>
         {/* The category is the part that can be counted. One reviewer's sentence
             about a cut-off figure helps that page; "figure" counted across the

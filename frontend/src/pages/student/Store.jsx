@@ -147,6 +147,17 @@ export default function Store() {
   const inSeg = q.get('board') || q.get('exam') || q.get('uni')
   const go = (p, replace = false) => vt(() => setQ(Object.fromEntries(Object.entries({ ...p, mine: home?.me?.grade || '' }).filter(([, v]) => v)), { replace }))
   useEffect(() => { if (!inSeg) scrollTo?.(0, 0) }, [inSeg])
+  // A learner who signed up for an exam or a board lands on that shelf the first time they open the store
+  // (TRACKS.md). Once per session, so going back to the full store stays where they put it.
+  useEffect(() => {
+    if (!home || inSeg) return
+    const p = home.me?.profile || {}
+    let seen = false; try { seen = !!sessionStorage.getItem('ev_store_shelf') } catch { /* */ }
+    if (seen) return
+    const shelf = p.track === 'exam' && p.exam ? { exam: p.exam } : p.university ? { uni: p.university } : (p.board || home.me?.board) ? { board: p.board || home.me.board } : null
+    try { sessionStorage.setItem('ev_store_shelf', '1') } catch { /* */ }
+    if (shelf) go(shelf, true)
+  }, [home])
   const page = !seg.data ? <div className="empty">Opening the store</div>
     : inSeg ? <Segment q={q} seg={seg.data} go={go} onOpen={b => setPick(b.id)} /> : <Landing seg={seg.data} mine={mine} go={go} />
   return <div className="page">

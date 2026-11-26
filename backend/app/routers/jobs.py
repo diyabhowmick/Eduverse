@@ -163,6 +163,30 @@ def _run_m1_extract(j: Job, store, job_id: int) -> bytes:
         return flow.read_bytes(), specs
 
 
+def _page_layer(db, j, store, job_id):
+    """Page view images, text positions and the page check. A failure here never fails the book."""
+    from .. import pagelayer
+    from .. import content as C
+    try:
+        _update(job_id, stage="Page view")
+        m1_book = None
+        if j.extras_key:
+            try:
+                m1_book = json.loads(store.get(f"{j.extras_key}/book.json"))
+                m1_book["_ledger"] = [json.loads(l) for l in store.get(f"{j.extras_key}/ledger.jsonl").decode().splitlines()[1:] if l.strip()]
+            except Exception:
+                pass
+        data = C.load(j.book)
+        rep = pagelayer.build(j.book, store, m1_book, lambda n: C.page_view(data, n))
+        if rep.get("problems"):
+            note = f"Page check: {rep['problems']} problem(s) flagged on the pages for the reviewer."
+            j.note = ((j.note or "") + ("\n" if j.note else "") + note)[:1000]
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[EV PAGEVIEW] book {j.book_id}: {e}", flush=True)
+
+
 def run_m1(job_id: int):
     """Printed book: M1 extracts it, the converter builds the digital book, M2 redraws the figures.
     M1 flow document: converter, then M2. Either way the book ends in the review queue. Nothing is published here."""
@@ -197,6 +221,9 @@ def run_m1(job_id: int):
             # normal conversion. Kept in its own field: error is only shown on
             # a failed job, so a warning put there was never seen.
             j.note = (_rep or {}).get("split_warning", "")[:1000]
+            db.commit()
+            _page_layer(db, j, store, job_id)
+            db.expire_all(); j = db.get(Job, job_id)
             if j.extras_key:
                 try:
                     specs = specs or json.loads(store.get(f"{j.extras_key}/m1_specs.json"))

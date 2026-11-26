@@ -303,8 +303,17 @@ def _group_text(g) -> Tuple[str, List[Run], float, float, Optional[str]]:
     colors: Dict[str, int] = {}
     for li, line in enumerate(g.lines):
         if li:
-            parts.append(" ")
-            pos += 1
+            prev = parts[-1] if parts else ""
+            nxt = line.text.lstrip()
+            if (len(prev) >= 3 and prev.endswith("-") and prev[-2].isalpha() and nxt[:1].islower()):
+                # "photo-" at the end of a line and "synthesis" on the next is one word broken by the printer.
+                parts[-1] = prev[:-1]
+                pos -= 1
+                runs = [Run(s=min(r.s, pos), e=min(r.e, pos), bold=r.bold, italic=r.italic, superscript=r.superscript,
+                            color=r.color, font=r.font) for r in runs]
+            else:
+                parts.append(" ")
+                pos += 1
         for r in line.runs:
             runs.append(Run(s=r.s + pos, e=r.e + pos, bold=r.bold,
                             italic=r.italic, superscript=r.superscript,
@@ -509,7 +518,7 @@ def _build_figures(pg, page: Page, raster: Optional[Image.Image], info: Dict,
                 cands.append(tuple(inner))
                 sources.append("panel_inner")
             continue
-        if _is_panel(rect, page):
+        if _is_panel(rect, page, pg):
             ledger.detect()
             ledger.drop(f"p{page.page:03d}_panel", page.page, "decorative",
                         "ruled panel around text, not a figure", list(rect))
@@ -928,24 +937,51 @@ def _vector_regions(pg, cfg: Config, placed) -> List[fitz.Rect]:
         drawings = pg.get_drawings()
     except Exception:
         return []
-    rects = []
+    rects, lines = [], []
     for d in drawings:
         r = fitz.Rect(d["rect"])
-        if r.is_empty or r.width < 1 or r.height < 1:
-            continue
+        if r.width < 1 and r.height < 1:
+            continue                     # a dot
         if r.width > pg.rect.width * 0.95 and r.height < 4:
             continue                     # a rule, not a figure
+        if r.width < 1 or r.height < 1:
+            # A straight line has a zero-height (or zero-width) box. On its own it is a rule or a table border and
+            # makes no figure, as before. But a line that joins two shapes is part of the diagram.
+            lines.append(fitz.Rect(r.x0 - 0.5, r.y0 - 0.5, r.x1 + 0.5, r.y1 + 0.5))
+            continue
         rects.append(r)
-    merged: List[fitz.Rect] = []
-    for r in rects:
-        hit = False
-        for i, m in enumerate(merged):
-            if _near_rect(r, m, 8):
-                merged[i] = m | r
-                hit = True
+
+    def merge(boxes):
+        out_m: List[fitz.Rect] = []
+        for r in boxes:
+            for i, m in enumerate(out_m):
+                if _near_rect(r, m, 8):
+                    out_m[i] = m | r
+                    break
+            else:
+                out_m.append(r)
+        return out_m
+
+    merged = merge(rects)
+    while True:                          # until stable: one pass missed chains (A near C only through B)
+        again = merge(merged)
+        if len(again) == len(merged):
+            break
+        merged = again
+    # Connectors: a line touching two separate shapes joins them, line included. Before this the line was dropped,
+    # so a box joined to a circle came out as two pictures with no line between them.
+    joined = True
+    while joined and len(merged) > 1:
+        joined = False
+        for ln in lines:
+            touch = [i for i, m in enumerate(merged) if _near_rect(ln, m, 8)]
+            if len(touch) >= 2:
+                box = ln
+                for i in touch:
+                    box = box | merged[i]
+                merged = [m for i, m in enumerate(merged) if i not in touch] + [box]
+                joined = True
                 break
-        if not hit:
-            merged.append(r)
     out = []
     for r in merged:
         if r.get_area() < cfg.figure_min_area_frac * pg.rect.get_area():
@@ -1097,7 +1133,7 @@ def _mark_panel(page: Page, rect) -> None:
                 b.flags.append("in_panel")
 
 
-def _is_panel(rect, page: Page) -> bool:
+def _is_panel(rect, page: Page, pg=None) -> bool:
     """A ruled panel around an activity or a note is a border, not a figure.
 
     The give away is that its inside is mostly text. Treating it as a figure
@@ -1111,7 +1147,25 @@ def _is_panel(rect, page: Page) -> bool:
         return False
     covered = sum(b.width * b.height for b in inside)
     area = rect.get_area()
-    return area > 0 and covered / area > 0.18
+    if area > 0 and covered / area > 0.18:
+        return True
+    # A shaded side panel of short entries (a Keywords list) covers little of
+    # its area, but nothing is drawn inside it except its own background, so
+    # it is still a panel of text, not a picture.
+    words = sum(len(re.findall(r"[A-Za-z]{2,}", b.text or "")) for b in inside)
+    if pg is None or words < 6 or len(inside) < 3:
+        return False
+    try:
+        drawings = pg.get_drawings()
+    except Exception:
+        return False
+    for d in drawings:
+        r = d.get("rect")
+        if r is None or r.get_area() > area * 0.85:
+            continue      # the panel's own fill or border
+        if r.x0 >= rect.x0 - 2 and r.x1 <= rect.x1 + 2 and r.y0 >= rect.y0 - 2 and r.y1 <= rect.y1 + 2:
+            return False  # something is drawn inside: artwork with labels
+    return True
 
 
 def _near_rect(a, b, gap) -> bool:

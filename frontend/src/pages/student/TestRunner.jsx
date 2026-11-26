@@ -26,7 +26,8 @@ function Setup({ id, home, onStart }) {
   const [c, setC] = useState({ count: 20, chapter: '', minutes: 30, scheme: exam ? 'exam' : 'simple' })
   const [busy, setBusy] = useState(false); const toast = useToast()
   const saved = savedFor(id)
-  const marking = c.scheme === 'exam' ? { correct: 4, wrong: 1 } : { correct: 1, wrong: 0 }
+  const real = home.pack.marking || { correct: 4, wrong: 1 }   // the exam's own scheme, from the server
+  const marking = c.scheme === 'exam' ? real : { correct: 1, wrong: 0 }
   async function start(body) {
     setBusy(true)
     try { onStart(await api(`/api/student/exams/${id}/mock`, { method: 'POST', body })) } catch (e) { toast(e.message, true) } finally { setBusy(false) }
@@ -39,15 +40,15 @@ function Setup({ id, home, onStart }) {
       <div className="card-b stack">{home.papers.map(p => {
         const mins = exam ? Math.round(p.questions * 2.4) : p.questions * 2
         return <div key={p.id} style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 200 }}><b>{p.title}</b><div className="muted" style={{ fontSize: 13 }}>{plural(p.questions, 'question')} · {long(mins * 60)}{exam ? ' · +4 right, −1 wrong' : ''}</div></div>
-          <button className="btn primary lg inline" disabled={busy} onClick={() => start({ paper_id: p.id, minutes: mins, correct: exam ? 4 : 0, wrong: exam ? 1 : 0 })}><Icon n="play" s={16} />Start paper</button></div>
+          <div style={{ flex: 1, minWidth: 200 }}><b>{p.title}</b><div className="muted" style={{ fontSize: 13 }}>{plural(p.questions, 'question')} · {long(mins * 60)}{exam ? ` · +${real.correct} right${real.wrong ? `, −${real.wrong} wrong` : ''}` : ''}</div></div>
+          <button className="btn primary lg inline" disabled={busy} onClick={() => start({ paper_id: p.id, minutes: mins, correct: exam ? real.correct : 0, wrong: exam ? real.wrong : 0 })}><Icon n="play" s={16} />Start paper</button></div>
       })}{!home.papers.length && <div className="empty">No papers yet</div>}</div></div>
     <div className="card"><div className="card-h"><h3>Custom test</h3><span className="sub">Mixed questions, your choice of size and time</span></div>
       <div className="card-b stack">
         <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>Questions</div><div className="chips">{[10, 20, 30, 50].map(n => <button key={n} type="button" className={'chip' + (c.count === n ? ' on' : '')} onClick={() => setC({ ...c, count: n })}>{n}</button>)}</div></div>
         <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>Time</div><div className="chips">{[[0, 'No limit'], [15, '15 min'], [30, '30 min'], [60, '1 hour'], [90, '1.5 hours']].map(([m, l]) => <button key={m} type="button" className={'chip' + (c.minutes === m ? ' on' : '')} onClick={() => setC({ ...c, minutes: m })}>{l}</button>)}</div></div>
         <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>Marking</div><div className="chips">
-          <button type="button" className={'chip' + (c.scheme === 'exam' ? ' on' : '')} onClick={() => setC({ ...c, scheme: 'exam' })}>Exam style: +4 right, −1 wrong</button>
+          <button type="button" className={'chip' + (c.scheme === 'exam' ? ' on' : '')} onClick={() => setC({ ...c, scheme: 'exam' })}>Exam style: +{real.correct} right{real.wrong ? `, −${real.wrong} wrong` : ''}</button>
           <button type="button" className={'chip' + (c.scheme === 'simple' ? ' on' : '')} onClick={() => setC({ ...c, scheme: 'simple' })}>1 mark each, nothing taken off</button></div></div>
         {home.weightage.length > 1 && <select className="input" style={{ maxWidth: 360 }} aria-label="Chapter" value={c.chapter} onChange={e => setC({ ...c, chapter: e.target.value })}>
           <option value="">Whole syllabus</option>{home.weightage.filter(w => w.chapter !== 'Not tagged').map(w => <option key={w.chapter}>{w.chapter}</option>)}</select>}

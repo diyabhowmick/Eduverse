@@ -31,3 +31,18 @@ def all_():
     return {"tracks": TRACKS, "levels": LEVELS, "boards": BOARDS, "national_boards": NATIONAL_BOARDS, "state_boards": STATE_BOARDS,
             "grades": GRADES, "exams": {"school": BOARD_EXAMS, "degree": DEGREE_EXAMS, "competitive": COMPETITIVE_EXAMS},
             "mediums": MEDIUMS, "org_kinds": ORG_KINDS, "year_windows": YEAR_WINDOWS}
+
+
+# Marks for a right answer and marks taken off for a wrong one, for objective questions. Defaults for mock tests;
+# check them each year against the exam's own notice. Exams not listed use each question's own marks, no negative.
+MARKING = {
+    "JEE Main": (4, 1), "JEE Advanced": (3, 1), "NEET UG": (4, 1), "CUET UG": (5, 1), "BITSAT": (3, 1),
+    "KCET": (1, 0), "TNEA": (1, 0), "MHT CET": (1, 0), "AP EAPCET": (1, 0), "TS EAMCET": (1, 0),
+}
+
+
+def marking_for(exam: str):
+    for k, v in MARKING.items():
+        if (exam or "").strip().lower() == k.lower():
+            return {"correct": v[0], "wrong": v[1]}
+    return None

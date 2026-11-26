@@ -61,6 +61,10 @@ def looks_like_formula(text: str) -> bool:
     words = [w for w in re.findall(r"[A-Za-z]{4,}", t)]
     if len(words) > 3:
         return False
+    # A sentence with a formula inside it ("The formula is 6CO2 + 6H2O = ..., and energy E = m x c x c.") is prose.
+    # Read as an equation it lost its spaces and its words. Formulas hardly ever contain these little words.
+    if len(re.findall(r"(?i)\b(?:the|is|are|and|of|to|in|for|with|by|that|this|was|were|be|it)\b", t)) >= 2:
+        return False
     if not (MATHY.search(t) or SUBSUP.search(t)):
         return False
     if CHEM_RE.search(t) and "=" not in t:

@@ -78,7 +78,10 @@ def retag(db, pack: Book, qs):
     idx = chapter_idx(db, pack)
     n = 0
     for q in qs:
-        t = P.tag(q.text + " " + " ".join(o.get("text", "") for o in (q.options or [])), idx) if idx else None
+        right = " ".join(o.get("text", "") for o in (q.options or []) if (o.get("key") or "").lower() == (q.answer or "").strip().lower())
+        text = " ".join([q.text or "", " ".join(o.get("text", "") for o in (q.options or [])), right,
+                         (q.answer or "") if not q.options else "", q.solution or ""])
+        t = P.tag(text, idx) if idx else None
         if t:
             q.chapter, q.chapter_ref = t["title"], {"book_id": t["book_id"], "chapter": t["chapter"]}; n += 1
     return n
@@ -207,12 +210,17 @@ def _editable(db, p: QuestionPaper, me):
         raise HTTPException(409, "This paper is approved. Ask the super admin to reopen it.")
 
 
+LIVE_BLANK = "Students can already see this paper, so a question needs its text. Write the text, or reopen the paper to draft first."
+
+
 @router.post("/papers/{pid}/questions")
 def add_question(pid: int, body: QIn, db: Session = Depends(get_db), me=Depends(staff)):
     p = db.get(QuestionPaper, pid)
     if not p:
         raise HTTPException(404, "Paper not found")
     _editable(db, p, me)
+    if p.status == "approved" and not (body.text or "").strip():
+        raise HTTPException(422, LIVE_BLANK)
     last = db.query(Question).filter(Question.paper_id == pid).order_by(Question.position.desc()).first()
     q = Question(paper_id=pid, position=(last.position + 1) if last else 0, **{k: v for k, v in body.model_dump().items() if v is not None})
     q.text = q.text or ""
@@ -227,8 +235,11 @@ def edit_question(qid: int, body: QIn, db: Session = Depends(get_db), me=Depends
     q = db.get(Question, qid)
     if not q:
         raise HTTPException(404, "Question not found")
-    _editable(db, db.get(QuestionPaper, q.paper_id), me)
+    paper = db.get(QuestionPaper, q.paper_id)
+    _editable(db, paper, me)
     ch = body.model_dump(exclude_none=True)
+    if paper.status == "approved" and "text" in ch and not (ch["text"] or "").strip():
+        raise HTTPException(422, LIVE_BLANK)
     if "answer" in ch and ch["answer"] != q.answer:
         q.answer_source, q.confidence = ("human" if ch["answer"] else ""), ""
     if "options" in ch:
@@ -290,6 +301,14 @@ def start_ai(db, p: QuestionPaper, action: str, me):
     return paper_out(p)
 
 
+def _pack_live(db, p: QuestionPaper):
+    """A pack goes live as soon as one of its papers is approved, whoever approved it (TRACKS.md).
+    A retired pack stays retired: someone took it down on purpose."""
+    pack = db.get(Book, p.book_id)
+    if pack and pack.status not in ("live", "retired"):
+        pack.status, pack.live_at = "live", datetime.utcnow()
+
+
 def publish(db, p: QuestionPaper, me):
     """The person who checked the paper publishes it: approved, and its pack is live in the marketplace."""
     if me.role != "super_admin":
@@ -304,8 +323,7 @@ def publish(db, p: QuestionPaper, me):
         raise HTTPException(409, f"{blank} question(s) have no text. Fix or delete them first.")
     pack = db.get(Book, p.book_id)
     p.status, p.reviewed_by = "approved", me.name
-    if pack.status != "live":
-        pack.status, pack.live_at = "live", datetime.utcnow()
+    _pack_live(db, p)
     log(db, me, "paper.publish", "paper", p.id, pack=pack.title)
     db.commit()
     return paper_out(p)
@@ -519,9 +537,17 @@ def paper_action(pid: int, action: str, body: dict | None = None, db: Session = 
         raise HTTPException(409, "Add at least one question before sending it for review")
     if action == "send_back" and not note.strip():
         raise HTTPException(422, "Say what needs fixing")
+    if action == "approve":
+        # Same checks as publish(): a paper a student will see must have no blank questions.
+        blank = db.query(Question).filter(Question.paper_id == pid).all()
+        blank = sum(1 for q in blank if not (q.text or "").strip())
+        if blank:
+            raise HTTPException(409, f"{blank} question(s) have no text. Fix or delete them first.")
     p.status = dst
     if action in ("approve", "send_back"):
         p.reviewed_by, p.review_note = me.name, note
+    if action == "approve":
+        _pack_live(db, p)
     log(db, me, "paper." + action, "paper", pid, note=note)
     db.commit()
     return paper_out(p)
@@ -587,7 +613,9 @@ def pack_home(bid: int, years: int = 10, db: Session = Depends(get_db), me=Depen
     all_years = sorted({p.year for p in db.query(QuestionPaper).filter(QuestionPaper.book_id == bid, QuestionPaper.status == "approved")}, reverse=True)
     attempts = db.query(MockAttempt).filter(MockAttempt.user_id == me.id, MockAttempt.book_id == bid, MockAttempt.submitted_at.isnot(None)) \
         .order_by(MockAttempt.submitted_at.desc()).limit(5).all()
-    return {"pack": {"id": b.id, "title": b.title, "exam": b.exam, "board": b.board, "level": b.level, "grade": b.grade, "subject": b.subject},
+    from ..taxonomy import marking_for
+    return {"pack": {"id": b.id, "title": b.title, "exam": b.exam, "board": b.board, "level": b.level, "grade": b.grade, "subject": b.subject,
+                     "marking": marking_for(b.exam)},
             "years": years, "available_years": all_years, "papers": list(papers.values()), "questions": len(rows), "weightage": weight,
             "linked_books": [{"id": x.id, "title": x.title} for x in db.query(Book).filter(Book.id.in_(b.linked_book_ids or [0]), Book.status == "live")],
             "attempts": [{"id": a.id, "score": a.score, "total": a.total, "when": a.submitted_at, "questions": len(a.question_ids), "title": a.title, "time_taken": a.time_taken} for a in attempts]}
@@ -664,8 +692,8 @@ class MockIn(BaseModel):
     mcq_only: bool = False
     paper_id: int | None = None   # a whole past paper, in its printed order
     minutes: int = 0              # 0 = no time limit
-    correct: float = 0            # marks for a right answer; 0 = each question's own marks, or 1
-    wrong: float = 0              # marks taken off for a wrong answer, e.g. 1 in JEE Main
+    correct: float | None = None  # marks for a right answer; 0 = each question's own marks; not sent = the exam's scheme
+    wrong: float | None = None    # marks taken off for a wrong answer, e.g. 1 in JEE Main; not sent = the exam's scheme
 
 
 def subject_of(section: str) -> str:
@@ -695,8 +723,12 @@ def start_mock(bid: int, body: MockIn, db: Session = Depends(get_db), me=Depends
         title = f"{body.chapter or 'Mixed'} practice test"
     if not pick:
         raise HTTPException(409, "No questions match these choices yet")
+    from ..taxonomy import marking_for
+    scheme = marking_for(pack.exam) or {"correct": 0, "wrong": 0}
+    correct = scheme["correct"] if body.correct is None else body.correct
+    wrong = scheme["wrong"] if body.wrong is None else body.wrong
     a = MockAttempt(user_id=me.id, book_id=bid, question_ids=[q.id for q in pick], answers={}, title=f"{pack.exam or pack.title}: {title}"[:200],
-                    paper_id=body.paper_id, minutes=max(0, min(body.minutes, 600)), mark_correct=max(0, body.correct), mark_wrong=abs(body.wrong))
+                    paper_id=body.paper_id, minutes=max(0, min(body.minutes, 600)), mark_correct=max(0, correct), mark_wrong=abs(wrong))
     db.add(a); db.commit()
     return mock_out(a, pick)
 

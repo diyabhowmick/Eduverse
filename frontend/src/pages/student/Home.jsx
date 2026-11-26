@@ -48,6 +48,7 @@ export default function Home() {
   const running = openTest()
   const c = d.continue, x = d.last_exam
   const hasRow = d.books.some(b => b.track !== 'exam' && b.readable && b.owned && b.progress > 0 && b.progress < 100)
+  const startBook = !hasRow && d.books.find(b => b.track !== 'exam' && b.readable && b.owned)   // given a book, not started yet
   const weekMin = d.week.reduce((a, w) => a + w.minutes, 0); const max = Math.max(10, ...d.week.map(w => w.minutes))
   return (
     <div className="page">
@@ -57,6 +58,7 @@ export default function Home() {
           : <button type="button" className="countdown" onClick={() => setGoalOpen(true)}><Icon n="clock" s={16} />Set your exam date</button>}
       </div>
       <div className="stack">
+        {d.nudge && <div className="note" role="status"><b>{d.nudge.from}</b> is checking in on your reading. Pick up where you left off today{c ? <> with <Link to={`/student/read/${c.id}`}>{c.title}</Link></> : ''}.</div>}
         <ContinueRow books={d.books} />
         {d.revise?.due > 0 && <Link className="rv-home" to="/student/revise"><span className="rv-home-ic"><Icon n="repeat" s={20} /></span>
           <div><b>{d.revise.due === 1 ? '1 card' : d.revise.due + ' cards'} to revise today</b><div className="muted">Mistakes, answers you were not sure about and saved explanations. About {Math.max(2, Math.round(Math.min(d.revise.due, 20) * 1.3))} minutes.</div></div>
@@ -73,7 +75,10 @@ export default function Home() {
           : x ? <Link className="hero" to={`/student/exam/${x.id}?tab=practice`}><div className="hero-body"><div className="k">Keep practising</div><h2>{x.title}</h2>
             <div className="muted">{x.practised ? `${plural(x.practised, 'question')} practised so far. Pick up where you left off.` : 'Start with a few questions. Every answer shows you the solution.'}</div></div>
             <span className="btn primary lg inline">{x.practised ? 'Continue' : 'Start practising'}</span></Link>
-          : hasRow ? null : <Link className="hero" to={d.store_on ? '/student/store' : '/student/books'}><div className="hero-body"><div className="k">Start here</div><h2>Find your textbooks and exam packs</h2>
+          : hasRow ? null : startBook ? <Link className="hero" to={'/student/read/' + startBook.id}><Book3D b={startBook} size="sm" /><div className="hero-body"><div className="k">{startBook.owned === 'school' ? 'From your school' : 'Your book'}</div><h2>{startBook.title}</h2>
+            <div className="muted">Start with Unit 1. Tap any highlighted word and Eddie explains it.</div></div>
+            <span className="btn primary lg inline">Start reading</span></Link>
+          : <Link className="hero" to={d.store_on ? '/student/store' : '/student/books'}><div className="hero-body"><div className="k">Start here</div><h2>Find your textbooks and exam packs</h2>
             <div className="muted">Pick your board and class, or the exam you are preparing for.</div></div><span className="btn primary lg inline">Browse</span></Link>}
 
         <div className="today">

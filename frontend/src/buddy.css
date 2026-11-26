@@ -97,3 +97,10 @@
 .rd-panel .bd-chips::-webkit-scrollbar{display:none}
 .rd-panel .bd-chips .chip{flex:none}
 .rd-fig img{height:96px}
+
+/* Eddie in the reader sits in the right margin, clear of the book text, and the
+   explanation panel and the end of the page leave room for him */
+@media (min-width:1001px){.reddie{right:18px}.rd-hint{max-width:150px}}
+.sside .sside-in{padding-bottom:96px}
+.spage .inner{padding-bottom:110px}
+.sreader.has-side .rd-hint{display:none}   /* never over the explanation panel */

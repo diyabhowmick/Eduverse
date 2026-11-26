@@ -1,16 +1,32 @@
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import Base, engine, SessionLocal
-from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn, tests, voice, study
+from .routers import auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline, exams, learn, tests, voice, study, issues, reviewtools
 from .seed import ensure_core
 from .content import ContentMissing
+from fastapi.middleware.gzip import GZipMiddleware
 
 from . import hardening as H
 H.check_config()
 app = FastAPI(title="EduVerse API", version="0.2.0", docs_url=None if H.is_prod() else "/api/docs",
               redoc_url=None, openapi_url=None if H.is_prod() else "/api/openapi.json")
+# Compress answers over 1 KB. Opening a 300-page book sends about 1 MB of JSON; compressed it is about a tenth.
+# (Caddy compresses on AWS too; on Railway nothing did.)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+
+import asyncio as _asyncio
+import os as _os
+from .db import THREADS as _THREADS
+
+# At most this many API requests are in progress at once; the rest wait here, which costs nothing. A request holds a
+# database connection from its sign-in check until it finishes, including while it waits for a thread, so without
+# this cap a burst of students used up every connection and the server stopped for 30 seconds at a time.
+_GATE = _asyncio.Semaphore(_THREADS)
+_QUEUE_WAIT = float(_os.getenv("QUEUE_WAIT_SECONDS", "20"))
+_FREE = ("/api/health", "/api/ready", "/api/client-error")
 
 
 @app.middleware("http")
@@ -20,7 +36,19 @@ async def _security(request, call_next):
     if cl and cl.isdigit() and int(cl) > 2 * 1048576 and "multipart/form-data" not in request.headers.get("content-type", ""):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=413, content={"detail": "Request too large"})
-    return H.add_headers(request, await call_next(request))
+    path = request.url.path
+    if not path.startswith("/api/") or path in _FREE:
+        return H.add_headers(request, await call_next(request))
+    try:
+        await _asyncio.wait_for(_GATE.acquire(), timeout=_QUEUE_WAIT)
+    except _asyncio.TimeoutError:
+        from fastapi.responses import JSONResponse
+        return H.add_headers(request, JSONResponse(status_code=503, headers={"Retry-After": "5"},
+                                                   content={"detail": "EduVerse is very busy right now. Try again in a few seconds."}))
+    try:
+        return H.add_headers(request, await call_next(request))
+    finally:
+        _GATE.release()
 
 
 # A book whose converted file is missing from storage used to surface as a bare
@@ -63,6 +91,8 @@ def _is_staff(request) -> bool:
         return False
 
 
+app.include_router(reviewtools.router)
+app.include_router(issues.router)  # before books: /api/books/issues must not be read as a book id
 for r in (auth, admins, schools, pricing, books, jobs, platform, analytics, school, requests, explain, review, reviewers, student, teacher, pipeline):
     app.include_router(r.router)
 app.include_router(review.public)
@@ -152,6 +182,14 @@ def relax_legacy_columns():
 
 
 @app.on_event("startup")
+def _threads():
+    """Match the request thread pool to the database pool (see db.py THREADS)."""
+    from anyio import to_thread
+    from .db import THREADS
+    to_thread.current_default_thread_limiter().total_tokens = THREADS
+
+
+@app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
     add_missing_columns()
@@ -167,6 +205,26 @@ def startup():
     jobs.resume_unfinished()
     from . import tasks
     tasks.start_embedded()
+    try:  # say loudly when uploads and converted books will be wiped by the next deploy
+        rep = issues.storage_report()
+        if not rep.get("persistent") or not rep.get("writable"):
+            print(f"[EV STORAGE] {rep.get('verdict')} (folder {rep.get('root')})", flush=True)
+    except Exception as e:
+        print(f"[EV STORAGE] could not check storage: {e}", flush=True)
+
+
+@app.post("/api/client-error")
+async def client_error(request: Request):
+    """A screen that crashed in someone's browser reports here, so it shows in the server log as [EV CLIENT]."""
+    H.guard("client-error:" + H.client_ip(request), 30, 600)
+    try:
+        body = (await request.body())[:4000].decode("utf-8", "replace")
+        import json as _json
+        d = _json.loads(body or "{}")
+        print(f"[EV CLIENT] {str(d.get('where', ''))[:300]} :: {str(d.get('message', ''))[:500]}\n{str(d.get('stack', ''))[:1500]}", flush=True)
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -204,6 +262,10 @@ if dist.exists():
 
     @app.get("/{path:path}")
     def spa(path: str):
+        if path == "api" or path.startswith("api/"):
+            # An API path no route answered. Say so: sending the web page with 200 made a missing route look like
+            # an empty answer, so screens broke quietly instead of showing an error.
+            return JSONResponse(status_code=404, content={"detail": f"No such API route: /{path}"})
         f = (dist / path).resolve()
         if path and f.is_file() and dist.resolve() in f.parents:  # brand images and other public files
             return FileResponse(f)

@@ -119,7 +119,8 @@ def _para_block(p, n, y, pw, margins, doc, fig_dir, image_parts, cfg):
         ref = None
         px_w = px_h = None
         if data:
-            ext_name = _sniff_ext(data)
+            from ..webimage import to_web
+            data, ext_name, _problem = to_web(data)   # TIFF, BMP, EMF, WMF become PNG a browser can draw
             ref = os.path.join("figures", f"{bid}_fig.{ext_name}")
             with open(os.path.join(fig_dir, os.path.basename(ref)), "wb") as fh:
                 fh.write(data)

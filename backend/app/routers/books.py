@@ -126,6 +126,9 @@ def transition(bid: int, action: str, db: Session = Depends(get_db), me=Depends(
     if dst == "live":
         b.live_at = datetime.utcnow()
         b.live_key = b.content_key or b.live_key
+        if b.track != "exam":
+            from .tests import draft_on_publish
+            draft_on_publish(db, b)
     if action == "pull_back":
         b.live_key = ""                       # pulled back on purpose: students stop seeing it
         b.assigned_at = datetime.utcnow()     # the clock restarts

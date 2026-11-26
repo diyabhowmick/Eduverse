@@ -65,8 +65,25 @@ export function Player({ id, secs }) {
 
 export function Tags({ tags }) { return tags?.length ? <div className="sv-tags">{tags.map(t => <span key={t}>#{t}</span>)}</div> : null }
 
-export function NoteCard({ n, onOpen, onDelete, onCard, compact }) {
+export function NoteCard({ n, onOpen, onDelete, onCard, onSaved, compact }) {
   const label = { note: 'Note', highlight: 'Highlight', voice: 'Voice note' }[n.kind]
+  const [edit, setEdit] = useState(null); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  async function save() {
+    setBusy(true); setErr('')
+    try {
+      const saved = await api('/api/student/study/notes/' + n.id, { method: 'PUT', body: { body: edit.body, tags: edit.tags.split(/[\s,]+/).map(x => x.replace(/^#/, '')).filter(Boolean) } })
+      setEdit(null); onSaved && onSaved(saved)
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  if (edit) return <div className={'sv-card' + (compact ? ' compact' : '')}>
+    <div className="sv-where"><b className={'k-' + n.kind}>Edit {label.toLowerCase()}</b></div>
+    {n.quote && <div className="sv-quote"><span className={'hl hl-' + n.color}>{n.quote}</span></div>}
+    <textarea className="input" rows="4" value={edit.body} onChange={e => setEdit({ ...edit, body: e.target.value })} aria-label="Note" />
+    <input className="input" style={{ marginTop: 6 }} value={edit.tags} onChange={e => setEdit({ ...edit, tags: e.target.value })} placeholder="Tags, for example #exam #formula" aria-label="Tags" />
+    {err && <div className="err">{err}</div>}
+    <div className="sv-foot"><button type="button" className="btn sm" onClick={() => setEdit(null)}>Cancel</button>
+      <button type="button" className="btn primary sm" disabled={busy} onClick={save}>{busy ? 'Saving' : 'Save'}</button></div>
+  </div>
   return <div className={'sv-card' + (compact ? ' compact' : '')}>
     <div className="sv-where"><b className={'k-' + n.kind}>{label}</b><span>{[n.book, n.chapter != null && `Unit ${n.chapter}`, n.section].filter(Boolean).join(' · ')}</span></div>
     {n.quote && <div className="sv-quote"><span className={'hl hl-' + n.color}>{n.quote}</span></div>}
@@ -75,6 +92,7 @@ export function NoteCard({ n, onOpen, onDelete, onCard, compact }) {
     {n.body && <div className="sv-body"><MathText text={n.body} /></div>}
     <Tags tags={n.tags} />
     <div className="sv-foot"><span>{when(n.created_at)}</span>
+      {onSaved && <button type="button" className="linkbtn" onClick={() => setEdit({ body: n.body || '', tags: (n.tags || []).map(x => '#' + x).join(' ') })}>Edit</button>}
       {onCard && <button type="button" className="linkbtn" onClick={() => onCard(n)}>Make a card</button>}
       {onDelete && <button type="button" className="linkbtn" onClick={() => onDelete(n)}>Delete</button>}
       {onOpen && n.book_id && <button type="button" className="sv-go" onClick={() => onOpen(n)}>Go to page</button>}</div>

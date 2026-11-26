@@ -335,7 +335,7 @@ def _see(target: Explanation | None, parent: Explanation):
 def _chapters(book: Book) -> list:
     from .. import content as C
     try:
-        return C.load(book, C.reader_key(book)).get("chapters", [])
+        return C.load_ro(book, C.reader_key(book)).get("chapters", [])
     except Exception:
         return []
 
@@ -687,23 +687,53 @@ def _unapproved(db, book: Book) -> tuple[int, int]:
 
 
 def explain_gate(db, book: Book, me=None) -> str | None:
-    """Why a textbook cannot go live yet, or None. Its explanations are written first (started here if
-    nobody has started them), then a reviewer approves every level 1 and level 2 explanation."""
+    """Why a textbook cannot go live yet, or None.
+
+    Writing ahead (auto_on_live) starts here whether or not approval is required. When approval is required the
+    book waits for the writing and then for a reviewer to approve every level 1 and level 2 explanation.
+
+    It never starts a job it knows will fail: if the model cannot answer, or the last attempt for this book
+    failed, it says why instead of starting another one. Before this, every Publish click started a job that
+    failed in a second while the reviewer was told the explanations were "being written", so the book could
+    never go live."""
     pc = X.pconf(db)
-    if book.track == "exam" or not pc.get("require_approval"):
+    if book.track == "exam":
         return None
+    need = pc.get("require_approval")
     j = db.query(PrepJob).filter(PrepJob.book_id == book.id, PrepJob.status.in_(("queued", "running"))).first()
     if j:
-        return f"Explanations are still being written ({j.done} of {j.total}). Approve them under Explanations once done, then publish."
-    if pc.get("level2") or pc.get("auto_on_live"):
+        return (f"Explanations are still being written ({j.done} of {j.total}). Approve them under Explanations once done, "
+                "then publish.") if need else None
+    if pc.get("auto_on_live"):
         try:
-            if pc.get("auto_on_live") and plan_for(db, book, ["concept_clarity"])["requests"]:
+            todo = plan_for(db, book, ["concept_clarity"])["requests"]
+        except HTTPException:
+            todo = 0
+        if todo:
+            last = db.query(PrepJob).filter(PrepJob.book_id == book.id).order_by(PrepJob.id.desc()).first()
+            problem = X.provider_problem(X.ai_conf(db))
+            recent = last and last.finished_at and datetime.utcnow() - last.finished_at < timedelta(minutes=10)
+            if not problem and last and last.status == "failed" and recent:
+                problem = (f"The last attempt to write them failed: {(last.error or 'no reason given')[:300]}. Fix the AI settings, "
+                           "then press Write ahead under AI usage (or publish again in 10 minutes to retry)")
+            if problem:
+                if need:
+                    return f"Explanations could not be written. {problem}"
+                return None  # approval not required: the book may go live; students' taps are answered live when the model is back
+            try:
                 start_prep(db, book, ["concept_clarity"], getattr(me, "email", "") or "auto, on publish", me)
-                return "Explanations are now being written for this book. Approve them under Explanations once done, then publish."
-        except HTTPException as e:
-            db.rollback()
-            if "Nothing to write" not in str(e.detail):
-                return f"Explanations could not be written: {e.detail}"
+                if need:
+                    # the same count the writing job shows, so the reviewer sees one number, not two
+                    j = db.query(PrepJob).filter(PrepJob.book_id == book.id).order_by(PrepJob.id.desc()).first()
+                    n = j.total if j and j.total else todo
+                    return (f"Explanations are now being written for this book (0 of {n}). "
+                            "Approve them under Explanations once done, then publish.")
+            except HTTPException as e:
+                db.rollback()
+                if need and "Nothing to write" not in str(e.detail):
+                    return f"Explanations could not be written: {e.detail}"
+    if not need:
+        return None
     waiting, reported = _unapproved(db, book)
     if waiting or reported:
         parts = ([f"{waiting} explanation{'s' if waiting != 1 else ''} still need approval"] if waiting else []) + \

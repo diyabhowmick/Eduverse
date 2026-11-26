@@ -19,6 +19,7 @@ from .ollama_client import OllamaClient
 from .schema import Book
 from .sources import docx_source, pdf_source
 from . import placement
+from .figjoin import join_figures
 from .structure import (assign_columns, bind_captions, bind_figure_labels,
                         dedupe_text,
                         join_split_math,
@@ -135,6 +136,10 @@ def run(input_path: str, out_dir: str, cfg: Optional[Config] = None,
         book.stats["figure_labels_bound"] = (
             book.stats.get("figure_labels_bound", 0)
             + bind_figure_labels(page, cfg))
+        if getattr(cfg, "join_figures", True):
+            book.stats["figures_joined"] = (
+                book.stats.get("figures_joined", 0)
+                + join_figures(page, out_dir, cfg, ledger))
         page.blocks = order_with_captions(page.blocks, cfg)
         book.stats["side_headings_hoisted"] = (
             book.stats.get("side_headings_hoisted", 0)

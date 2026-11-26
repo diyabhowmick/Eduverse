@@ -225,5 +225,7 @@ def add_headers(request, response):
 
 
 def client_ip(request) -> str:
+    # The last address is the one our own proxy (Railway's edge, or Caddy) added. The first can be anything the
+    # client typed, which let anyone dodge the sign-in limit by sending a made-up X-Forwarded-For.
     fwd = request.headers.get("x-forwarded-for", "")
-    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")) or "unknown"
+    return (fwd.split(",")[-1].strip() if fwd else (request.client.host if request.client else "")) or "unknown"

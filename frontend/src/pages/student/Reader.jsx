@@ -6,8 +6,11 @@ import { api } from '../../api'
 import ExplainPanel from '../../ExplainPanel'
 import ReaderEddie from '../../ReaderEddie'
 import { EddieBot } from '../../Eddie'
-import { Sheet, Icon, useNarrow, useToast, MathText } from '../../ui'
+import { Sheet, Icon, useNarrow, useToast, MathText, BookImg } from '../../ui'
 import { NoteCard, Composer } from '../../Study'
+import { listShape } from '../../listlabels'
+import PageView from './PageView'
+import '../../pageview.css'
 
 const SIZES = [['15.5px', 'Small'], ['17.5px', 'Medium'], ['19.5px', 'Large'], ['22px', 'Extra large']]
 const LEADS = [['1.6', 'Close'], ['1.8', 'Normal'], ['2.05', 'Loose']]
@@ -41,9 +44,9 @@ function Blk({ b, bookId, onWord, onFig }) {
     case 'heading': return b.level === 3 ? <h3 className="sec" {...a}><span className="n">{b.number}</span>{b.text}</h3> : <h2 className="sec" {...a}>{b.number && <span className="n">{b.number}</span>}{b.text}</h2>
     case 'subheading': return <p {...a}><b>{b.text}</b></p>
     case 'paragraph': return <p {...a}><Text text={b.text} marks={b.marks} onWord={onWord} />{(b.math || []).map((m, i) => <span key={i} dangerouslySetInnerHTML={{ __html: tex(m) }} />)}</p>
-    case 'list': { const L = b.ordered ? 'ol' : 'ul'; return <L {...a}>{b.items.map((it, i) => <li key={i}><Text text={it.text} marks={it.marks} onWord={onWord} /></li>)}</L> }
+    case 'list': { const L = b.ordered ? 'ol' : 'ul'; const sh = listShape(b.items); return <L {...a} className={sh.own ? 'own-labels' : undefined}>{b.items.map((it, i) => <li key={i} className={sh.sub[i] ? 'sub' : undefined}><Text text={it.text} marks={it.marks} onWord={onWord} /></li>)}</L> }
     case 'equation': return <div className="eq" {...a} dangerouslySetInnerHTML={{ __html: b.latex.map(tex).join('') }} />
-    case 'figure': return <figure {...a}><img src={`/api/content/${bookId}/${b.image}`} alt={b.desc?.summary || b.caption} loading="lazy" onClick={e => e.currentTarget.classList.toggle('big')} />
+    case 'figure': return <figure {...a}><BookImg src={`/api/content/${bookId}/${b.image}`} alt={b.desc?.summary || b.caption} loading="lazy" onClick={e => e.currentTarget.classList.toggle('big')} />
       <figcaption>{b.number && <b>Figure {b.number} </b>}{b.caption}
         {onFig && <button type="button" className="fig-ask" onClick={() => onFig(b)} title="Ask Eddie about this figure"><EddieBot size={18} jet={false} />Ask Eddie</button>}</figcaption></figure>
     case 'table': return <div className="tbl" {...a}>{(b.caption || b.number) && <div className="tcap"><b>{b.label || 'Table'} {b.number}</b> {b.caption}</div>}<table><tbody>{b.rows.map((r, i) => <tr key={i}>{r.map((c, j) => i === 0 ? <th key={j}>{c}</th> : <td key={j}>{c}</td>)}</tr>)}</tbody></table></div>
@@ -67,14 +70,18 @@ export default function Reader() {
   const [look, setLookState] = useState(loadLook); const [lookOpen, setLookOpen] = useState(false)
   const setLook = l => { setLookState(l); localStorage.setItem('ev_reader', JSON.stringify(l)) }
   const narrow = useNarrow(1000)
+  // Page view (the printed page) on a wide screen when this book has it; Reading view on a phone. The choice is remembered.
+  const [viewPick, setViewPick] = useState(() => { try { return localStorage.getItem('ev_view') || '' } catch { return '' } })
+  const pickView = v => { setViewPick(v); try { localStorage.setItem('ev_view', v) } catch { /* private mode */ } }
   const pageRef = useRef(); const lastPing = useRef(Date.now()); const curRef = useRef(null)
-  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); const qc = sp.get('ch'); setChNo(qc != null && b.chapters.some(c => String(c.number) === qc) ? +qc : (b.progress.position?.chapter ?? b.chapters[0]?.number)) }).catch(e => setErr(e.message)) }, [id])
+  useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); const qc = sp.get('ch'); setChNo(qc != null && b.chapters.some(c => String(c.number) === qc) ? +qc : (b.progress.position?.chapter ?? (b.chapters.find(c => c.number > 0) || b.chapters[0])?.number)) }).catch(e => setErr(e.message)) }, [id])
   const ch = useMemo(() => bk?.chapters.find(c => c.number === chNo), [bk, chNo])
   const loadMine = () => ch && api(`/api/student/study/chapter?book_id=${id}&chapter=${ch.number}`).then(setMine).catch(() => {})
   useEffect(() => { loadMine() }, [ch?.number])
   // Highlights and note markers painted onto the page after it renders.
   useEffect(() => {
     const page = pageRef.current; if (!page || !ch) return
+    if (page.querySelector('.pv-wrap')) return   // Page view paints its own highlights; editing its text here would break it
     page.querySelectorAll('mark.uhl').forEach(m => m.replaceWith(...m.childNodes)); page.querySelectorAll('.note-mk').forEach(m => m.remove())
     page.normalize()
     const inner = page.querySelector('.inner'); const seen = {}
@@ -90,7 +97,7 @@ export default function Reader() {
         mk.textContent = n.kind === 'voice' ? '\u25B6' : '\u270E'; mk.title = 'Your note'; mk.style.top = (el.offsetTop + 4) + 'px'; mk.onclick = () => setPanel('notes'); inner.appendChild(mk)
       }
     }
-  }, [mine.notes, ch, look.size, look.lead])
+  }, [mine.notes, ch, look.size, look.lead, viewPick])
   const kws = useMemo(() => Object.fromEntries((ch?.keywords || []).map(k => [k.id, k])), [ch])
   // progress: on topic change and every 30 seconds while reading
   const ping = (section) => {
@@ -132,12 +139,40 @@ export default function Reader() {
     const figs = figuresOf(ch).filter(f => ((f.caption || '') + ' ' + (f.desc?.summary || '')).toLowerCase().includes(k.key)).slice(0, 2)
     explain(k.term, el.closest('p,li')?.textContent || '', k.definition || '', figs, String(kid), el.closest('[id]')?.id || '')
   }
+  // The digital block on printed page n that holds this text: gives Page view the same context the Reading view has.
+  function blockFor(n, text) {
+    const want = (text || '').toLowerCase(); let first = null, hit = null
+    const walk = bs => bs.forEach(b => {
+      if (hit) return
+      if (b.type === 'box') return walk(b.children)
+      const on = b.page === n || b.page_end === n
+      if (!on) return
+      const tx = b.type === 'list' ? b.items.map(i => i.text).join(' ') : (b.text || b.caption || '')
+      if (!first && tx) first = { ...b, tx }
+      if (want && tx.toLowerCase().includes(want.slice(0, 60))) hit = { ...b, tx }
+    })
+    walk(ch.blocks)
+    return hit || first
+  }
+  function onPageWord(kid, el, n) {
+    const k = kws[kid]; if (!k) return
+    try { localStorage.setItem('ev_hint_kw', '1') } catch { /* private mode */ }
+    document.querySelectorAll('.kw.sel').forEach(x => x.classList.remove('sel')); el.classList.add('sel')
+    const b = blockFor(n, k.key)
+    const figs = figuresOf(ch).filter(f => ((f.caption || '') + ' ' + (f.desc?.summary || '')).toLowerCase().includes(k.key)).slice(0, 2)
+    explain(k.term, b?.tx || '', k.definition || '', figs, String(kid), b?.id || '')
+  }
   function onMouseUp() {
     setTimeout(() => {
       const s = getSelection(); const t = s.toString().trim()
       if (!t || t.length < 2 || t.length > 400) return setSelBtn(null)
       const r = s.getRangeAt(0).getBoundingClientRect()
       const host = s.anchorNode?.parentElement
+      const pv = host?.closest('[data-pv-page]')
+      if (pv) {   // Page view: the text is laid over the printed page, so find the block it came from
+        const b = blockFor(+pv.dataset.pvPage, t)
+        return setSelBtn({ t, x: r.left, y: r.bottom + 6, para: b?.tx || '', block: b?.id || '', section: b?.section || cur || '' })
+      }
       setSelBtn({ t, x: r.left, y: r.bottom + 6, para: host?.closest('p,li')?.textContent || '', block: host?.closest('[id]')?.id || '', section: host?.closest('[data-sec]')?.dataset.sec || cur || '' })
     }, 0)
   }
@@ -155,6 +190,8 @@ export default function Reader() {
   let sepShown = false
   const counts = { notes: mine.notes.length, saved: mine.saved.length, mistakes: mine.mistakes.length }
   const secTitle = ch.sections.find(x => x.id === cur)?.title || ch.title
+  const hasPages = !!bk.layout?.available
+  const pageMode = hasPages && (viewPick ? viewPick === 'page' : !narrow)
   const side = <>
     <div className="sside-h"><div><div className="k">{panel === 'explain' && sel ? 'Explained for you' : 'Unit ' + ch.number}</div><h2>{panel === 'explain' && sel ? sel.term : secTitle}</h2></div>
       {!narrow && <button className="btn ghost sm" aria-label="Close" onClick={close}><Icon n="x" s={18} /></button>}</div>
@@ -166,7 +203,7 @@ export default function Reader() {
       <div className="scard ai"><div className="h">Explanation</div>
         <ExplainPanel key={sel.key} styles={bk.rules.allowed_depths} onSaved={loadMine} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
           term: sel.term, paragraph: sel.paragraph, definition: sel.definition, figures: sel.figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')) }} /></div>
-      {sel.figs.map(f => <div className="scard" key={f.id}><div className="h">{f.number ? 'Figure ' + f.number : 'Figure'}</div><img src={`/api/content/${id}/${f.image}`} alt="" /><div className="muted" style={{ fontSize: 13 }}>{f.caption}</div></div>)}</>)}
+      {sel.figs.map(f => <div className="scard" key={f.id}><div className="h">{f.number ? 'Figure ' + f.number : 'Figure'}</div><BookImg src={`/api/content/${id}/${f.image}`} alt="" /><div className="muted" style={{ fontSize: 13 }}>{f.caption}</div></div>)}</>)}
     {panel === 'notes' && <div className="rd-list">
       {draft ? <Composer key={draft.quote} at={draft} onCancel={() => setDraft(null)} onSaved={() => { setDraft(null); loadMine(); toast('Saved to your Notebook') }} />
         : <button className="btn rd-new" onClick={() => setDraft({ book_id: +id, chapter: ch.number, section: cur || '', block_id: '', quote: '' })}><Icon n="note" s={15} />New note on this unit</button>}
@@ -182,7 +219,7 @@ export default function Reader() {
       {mine.mistakes.length > 0 && <Link className="btn sm" to="/student/revise?tab=mistakes">Open the Mistake book</Link>}</div>}
   </>
   return (
-    <div className={'sreader' + (panel && !narrow ? ' has-side' : '')}>
+    <div className={'sreader' + (panel && !narrow ? ' has-side' : '') + (pageMode ? ' pv-on' : '')}>
       <nav className="srail">
         <Link to="/student" className="btn ghost sm">My books</Link>
         <div className="sbook">{bk.title}<div className="bar-track" style={{ marginTop: 6 }}><i style={{ width: bk.progress.percent + '%' }} /></div><span className="muted" style={{ fontSize: 12 }}>{bk.progress.percent}% of the book read</span></div>
@@ -197,11 +234,16 @@ export default function Reader() {
           <button className="btn ghost sm" onClick={() => setLookOpen(true)} aria-label="Reading comfort"><Icon n="text" s={18} /></button></div>
         <div className="inner">
           <div className="chap-head"><span className="u">{ch.number ? `Unit ${ch.number}` : 'Before Unit 1'}</span><h1>{ch.title}</h1><span className="muted chap-tip">Tap a <span className="kw demo">highlighted word</span> to have it explained, or select any words.</span>
-            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}><button className="btn ghost sm" onClick={() => setPanel('notes')}><Icon n="note" s={16} />My notes{mine.notes.length ? ` (${mine.notes.length})` : ''}</button>
-            <button className="btn ghost sm" onClick={() => setLookOpen(true)}><Icon n="text" s={16} />Text size and colour</button></span></div>
-          {ch.blocks.map(b => <Blk key={b.id} b={b} bookId={id} onWord={onWord} onFig={f => setFigAsk({ f, n: Date.now() })} />)}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {hasPages && <span className="seg pv-switch" role="group" aria-label="How to show the book">
+              <button type="button" className={pageMode ? 'on' : ''} onClick={() => pickView('page')} title="The printed page, exactly as in the textbook">Page view</button>
+              <button type="button" className={!pageMode ? 'on' : ''} onClick={() => pickView('flow')} title="Flowing text you can resize">Reading view</button></span>}
+            <button className="btn ghost sm" onClick={() => setPanel('notes')}><Icon n="note" s={16} />My notes{mine.notes.length ? ` (${mine.notes.length})` : ''}</button>
+            {!pageMode && <button className="btn ghost sm" onClick={() => setLookOpen(true)}><Icon n="text" s={16} />Text size and colour</button>}</span></div>
+          {pageMode ? <PageView bookId={id} layout={bk.layout} ch={ch} notes={mine.notes} onWord={onPageWord} />
+            : ch.blocks.map(b => <Blk key={b.id} b={b} bookId={id} onWord={onWord} onFig={f => setFigAsk({ f, n: Date.now() })} />)}
           <div className="chap-end">
-            <div style={{ flex: 1, minWidth: 200 }}><b>End of unit {ch.number}</b><div className="muted" style={{ fontSize: 13 }}>{bk.tests?.[ch.number] ? 'Check what stayed with you. Eddie will go through anything you miss.' : bk.practice_packs?.length ? 'Check what stayed with you: try past exam questions from this chapter.' : 'Well done. On to the next one.'}</div></div>
+            <div style={{ flex: 1, minWidth: 200 }}><b>{ch.number ? `End of unit ${ch.number}` : `End of ${ch.title || "the opening pages"}`}</b><div className="muted" style={{ fontSize: 13 }}>{bk.tests?.[ch.number] ? 'Check what stayed with you. Eddie will go through anything you miss.' : bk.practice_packs?.length ? 'Check what stayed with you: try past exam questions from this chapter.' : bk.chapters.find(c => c.number > ch.number) ? 'Well done. On to the next one.' : 'Well done. You have reached the end of this book.'}</div></div>
             {bk.tests?.[ch.number] > 0 && <div className="chap-test"><EddieBot size={34} jet={false} />
               <Link className="btn primary" to={`/student/test/${id}/${ch.number}?level=quick`}>Quick check ({Math.min(5, bk.tests[ch.number])})</Link>
               {bk.tests[ch.number] > 5 && <Link className="btn" to={`/student/test/${id}/${ch.number}?level=chapter`}>Chapter test ({Math.min(15, bk.tests[ch.number])})</Link>}</div>}

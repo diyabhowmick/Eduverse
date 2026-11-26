@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { auth } from './api'
 import { Icon, Sheet } from './ui'
+import ErrorBoundary from './ErrorBoundary'
 
 export function ZLogo({ theme }) {
   return <img className="zlogo-img" src={theme === 'dark' ? '/brand/zprox_logo_dark.png' : '/brand/zprox_logo_light.png'} alt="zPROx.AI" />
@@ -54,7 +55,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
           <div className="who"><span>{user?.email}</span><div className="avatar" title={user?.email}>{(user?.name || 'U')[0]}</div>
             <button className="btn ghost" onClick={signOut} title="Sign out" aria-label="Sign out"><Icon n="out" s={16} /></button></div>
         </header>
-        <div className="route-fx" key={loc.pathname}>{children}</div>
+        <div className="route-fx" key={loc.pathname}><ErrorBoundary where={loc.pathname}><Suspense fallback={<div className="empty" style={{ padding: 40 }}>Loading</div>}>{children}</Suspense></ErrorBoundary></div>
       </main>
       <nav className="tabbar" aria-label="Main">
         {tabs.map(([p, i, l]) => p === '__more'

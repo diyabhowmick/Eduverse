@@ -211,6 +211,29 @@ def ask(ai: dict, prompt: str, *, json_mode=False, timeout=240, max_tokens=1200,
                 json_mode=json_mode, usage=usage, max_tokens=max_tokens)
 
 
+def provider_problem(ai: dict) -> str | None:
+    """Why the configured model cannot answer right now, in plain words, or None. Cheap: no model call."""
+    import os
+    provider = os.getenv("AI_PROVIDER_OVERRIDE") or ai.get("provider", "ollama")
+    if provider == "mock":
+        return None
+    pv = (ai.get("providers") or {}).get(provider) or {}
+    if provider == "ollama":
+        import urllib.request
+        base = (pv.get("base_url") or "http://localhost:11434").rstrip("/")
+        try:
+            urllib.request.urlopen(base + "/api/tags", timeout=4).read(1)
+            return None
+        except Exception:
+            return (f"The AI provider is set to Ollama at {base}, and nothing answers there. On a cloud server there is no "
+                    "Ollama: in Super Admin, AI settings, choose OpenAI (or Claude) and save its key.")
+    if provider == "openai" and not (pv.get("api_key") or os.getenv("OPENAI_API_KEY")):
+        return "The AI provider is OpenAI but no key is saved. Add it in Super Admin, AI settings, or set OPENAI_API_KEY on the server."
+    if provider == "anthropic" and not (pv.get("api_key") or os.getenv("ANTHROPIC_API_KEY")):
+        return "The AI provider is Claude but no key is saved. Add it in Super Admin, AI settings, or set ANTHROPIC_API_KEY on the server."
+    return None
+
+
 def parse_json(text: str) -> dict:
     import json as _json
     t = (text or "").strip()

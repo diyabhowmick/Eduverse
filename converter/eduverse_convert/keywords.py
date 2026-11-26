@@ -2,7 +2,7 @@
 import re
 from collections import defaultdict
 
-W = {"glossary": 3.0, "definition": 3.0, "heading": 2.0, "unit_law": 2.0, "quoted": 1.5, "caption": 1.0, "points": 1.0, "exercises": 0.5, "frequent": 0.5}
+W = {"glossary": 3.0, "definition": 3.0, "bold": 3.0, "defines": 2.0, "heading": 2.0, "unit_law": 2.0, "quoted": 1.5, "caption": 1.0, "points": 1.0, "exercises": 0.5, "frequent": 0.5}
 THRESHOLD = 2.5
 GENERIC = {"the above activity", "this process", "the following", "students", "student", "lesson", "figure", "table", "activity", "example",
            "problem", "solution", "introduction", "physics", "science", "daily life", "day to day life", "our daily life", "the same", "different types",
@@ -12,6 +12,9 @@ LEAD = r"^(types of|applications of|uses of|advantages of|disadvantages of|facto
 DEF_AFTER = [r"\b(?:is|are|was)\s+(?:called|known as|termed|named|referred to as|defined as)\s+(?:the\s+|a\s+|an\s+)?[‘'\"“]?([A-Za-z][A-Za-z \-’']{2,40}?)[’'\"”]?(?=[.,;:)]|\s+(?:and|or|which|in|of)\b)",
              r"\b(?:known as|called)\s+[‘'\"“]([^’'\"”]{3,40})[’'\"”]"]
 DEF_BEFORE = [r"(?:^|[.;]\s+)([A-Z][a-z]+(?:\s+[a-z]+){0,3})\s+(?:is|are)\s+(?:defined as|a measure of|the (?:measure|process|property|amount|ratio|angle|force|device|instrument|distance|closeness|study|flow|bending|splitting|bouncing|technique|form of heat transfer|process of)\b)"]
+# "Chlorophyll is the green pigment ...": a capitalised word opening a sentence and then described. Weaker than an
+# explicit definition, so it needs one more signal (used three or more times, a heading, a caption) to count.
+DEF_SOFT = [r"(?:^|[.;]\s+)([A-Z][a-z]{3,}(?:\s+[a-z]{3,}){0,2})\s+(?:is|are)\s+(?:the|a|an)\s+(?:[a-z]+\s+){0,3}(?:pigment|process|substance|part|organ|tissue|cell|gas|liquid|solid|force|energy|form|type|kind|unit|device|instrument|method|property|quantity|reaction|compound|element|mixture|structure|layer|organism|function|movement|change|loss|flow|study)s?\b"]
 UNIT_LAW = [r"\bSI unit of (?:the\s+)?([a-z][a-z ]{2,30}?) is (?:the\s+)?[‘'\"]?([a-z]{3,20})",
             r"\b([A-Z][a-z]+(?:’s|'s)\s+[Ll]aws?(?:\s+of\s+[a-z]+)?)",
             r"\b([a-z]*(?:meter|metre|scope))\b",
@@ -60,14 +63,14 @@ def candidates(ch):
         if not k or k in GENERIC or len(k) < 3 or k.isdigit() or len(k.split()) > 4 or re.search(r"\b(to|by|of|for|and|in|the|with)$", k):
             return
         c = cand[k]; c["signals"].add(sig); c["forms"].add(t)
-        if sentence and sig in ("definition", "unit_law") and not c["definition"]:
+        if sentence and sig in ("definition", "unit_law", "defines", "bold") and not c["definition"]:
             c["definition"] = sentence.strip()
     body = []
     for b, box in walk(ch["blocks"]):
         text = block_text(b)
         if not text:
             continue
-        if box == "glossary":
+        if box in ("glossary", "keywords"):   # the book's own list of key words counts as strongly as a glossary
             for line in text.split("\n"):
                 if 2 < len(line) <= 40 and len(line.split()) <= 5 and line[:1].isupper() and not line.rstrip().endswith("."):
                     add(line, "glossary")
@@ -81,6 +84,19 @@ def candidates(ch):
         if box in ("exercises", "points"):
             continue
         body.append(text)
+        # Bold words in running text: textbooks print their key terms in bold, and M1 keeps the bold spans.
+        for obj in ([b] if b["type"] == "paragraph" else b.get("items", []) if b["type"] == "list" else []):
+            for span in obj.get("bold") or []:
+                try:
+                    s, e = span[0], span[1]
+                except (TypeError, IndexError):
+                    continue
+                piece = obj["text"][s:e].strip()
+                if 3 <= len(piece) <= 40 and 1 <= len(piece.split()) <= 4 and not piece.endswith(":"):
+                    full = obj["text"]
+                    a = max(full.rfind(".", 0, s), full.rfind("?", 0, s), full.rfind("!", 0, s)) + 1
+                    z = min([i for i in (full.find(".", e), full.find("?", e), full.find("!", e)) if i != -1] or [len(full) - 1]) + 1
+                    add(piece, "bold", full[a:z])
         for sent in re.split(r"(?<=[.?!])\s+", text.replace("\n", " ")):
             for p in DEF_AFTER:
                 for m in re.finditer(p, sent):
@@ -88,6 +104,9 @@ def candidates(ch):
             for p in DEF_BEFORE:
                 for m in re.finditer(p, sent):
                     add(m.group(1), "definition", sent)
+            for p in DEF_SOFT:
+                for m in re.finditer(p, sent):
+                    add(m.group(1), "defines", sent)
             for p in UNIT_LAW:
                 for m in re.finditer(p, sent):
                     for g in m.groups():

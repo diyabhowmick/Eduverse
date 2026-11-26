@@ -267,3 +267,16 @@ export function HBars({ rows, label, value, fmt = v => v }) {
 export function Confirm({ text, onYes, onClose, yes = 'Confirm', danger }) {
   return <Modal title="Please confirm" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className={'btn ' + (danger ? 'primary' : 'primary')} onClick={onYes}>{yes}</button></>}><p style={{ margin: 0 }}>{text}</p></Modal>
 }
+
+/* A picture from a converted book. If it cannot be loaded (file missing from storage, a format the browser
+   cannot draw, no access) it shows a plain "Picture not available" box instead of the browser's broken-image icon. */
+export function BookImg({ src, alt = '', className, style, ...rest }) {
+  const [bad, setBad] = useState(false)
+  useEffect(() => setBad(false), [src])
+  if (bad || !src || /\/(undefined|null)$/.test(src)) {
+    return <div className={'img-missing' + (className ? ' ' + className : '')} role="img" aria-label={alt || 'Picture not available'}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120, padding: 16, border: '1px dashed var(--line, #ccc)', borderRadius: 8, color: 'var(--muted, #777)', fontSize: 13, textAlign: 'center', ...style }}>
+      Picture not available</div>
+  }
+  return <img src={src} alt={alt} className={className} style={style} onError={() => setBad(true)} {...rest} />
+}

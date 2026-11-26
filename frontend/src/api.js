@@ -134,4 +134,5 @@ const ACTIONS = {
   'paper.create': 'Added a question paper', 'paper.publish': 'Published a question paper', 'paper.read_ai': 'Read a paper with AI', 'paper.answer_ai': 'Generated answers with AI',
   'settings.ai': 'Changed AI settings', 'settings.branding': 'Changed branding', 'settings.features': 'Changed features', 'settings.permissions': 'Changed permissions',
 }
-export const actionLabel = a => ACTIONS[a] || a
+// an action with no wording yet reads as words, never as a code like "tests.approve_all"
+export const actionLabel = a => ACTIONS[a] || (a ? (s => s.charAt(0).toUpperCase() + s.slice(1))(String(a).replace(/[._]+/g, ' ').replace(/\bm([12])\b/g, 'M$1')) : '')

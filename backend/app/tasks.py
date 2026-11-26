@@ -127,8 +127,33 @@ def loop(stop: threading.Event | None = None):
 
 def start_embedded():
     """The API's own worker, for a single box. Off when EMBEDDED_WORKER=0 (separate worker containers)."""
-    global _started
+    global _started, _lockfile
     if _started or os.getenv("EMBEDDED_WORKER", "1") == "0":
         return
+    # With several web processes (WEB_CONCURRENCY), only one of them runs background work, so two large books are
+    # never read at once on the same box. The others serve requests only. The lock is let go when that process ends,
+    # and the next one to start takes over.
+    try:
+        import fcntl
+        _lockfile = open(os.getenv("EMBEDDED_WORKER_LOCK", "/tmp/eduverse-worker.lock"), "w")
+        fcntl.flock(_lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        _start_retry()
+        return
+    except Exception:
+        pass   # no file locks here (Windows): run as before
     _started = True
     threading.Thread(target=loop, daemon=True, name="ev-tasks").start()
+
+
+_lockfile = None
+
+
+def _start_retry():
+    """Try again every minute: if the process holding the worker dies, another one picks the work up."""
+    def again():
+        import time
+        while not _started:
+            time.sleep(60)
+            start_embedded()
+    threading.Thread(target=again, daemon=True, name="ev-tasks-standby").start()

@@ -291,7 +291,33 @@ def chapter_index(books_data: list[tuple[int, dict]]):
                 for w in tokens(k.get("term", "")):
                     c[w] += 2
             idx.append((bid, ch.get("number"), ch.get("title", ""), c))
+    # The chapter's own text too, not only its titles and highlighted words: "Which pigment makes leaves green?"
+    # (answer: chlorophyll) went untagged when chlorophyll was never highlighted. A word used in many chapters
+    # counts for less, so everyday words do not pull a question to the wrong chapter.
+    bodies = []
+    for bid, data in books_data:
+        for ch in data.get("chapters", []):
+            bodies.append(Counter(tokens(_chapter_text(ch))))
+    df = Counter(w for b in bodies for w in b)
+    for (bid, num, title, c), body in zip(idx, bodies):
+        for w, n in body.items():
+            c[w] += min(n, 3) / df[w]
     return idx
+
+
+def _chapter_text(ch) -> str:
+    out = []
+
+    def walk(blocks):
+        for b in blocks:
+            if b.get("type") == "box":
+                walk(b.get("children") or [])
+            elif b.get("type") in ("paragraph", "heading", "subheading"):
+                out.append(b.get("text", ""))
+            elif b.get("type") == "list":
+                out.extend(i.get("text", "") for i in b.get("items", []))
+    walk(ch.get("blocks", []))
+    return " ".join(out)
 
 
 def tag(question_text: str, idx) -> dict | None:

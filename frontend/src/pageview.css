@@ -1,0 +1,29 @@
+/* Page view: the printed page with its real text laid over it */
+.pv-wrap { display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 6px 0 10px; }
+.pv-page { position: relative; width: 100%; max-width: 900px; background: #fff; border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 6px 22px rgba(0,0,0,.08); overflow: hidden; }
+.pv-page > img { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; pointer-events: none; }
+.pv-text { position: absolute; inset: 0; }
+.pv-line { position: absolute; white-space: pre; color: transparent; transform-origin: 0 0; line-height: 1;
+  font-family: Arial, Helvetica, sans-serif; cursor: text; }
+.pv-line::selection, .pv-line *::selection { background: rgba(224, 33, 47, .28); color: transparent; }
+.pv-line::-moz-selection, .pv-line *::-moz-selection { background: rgba(224, 33, 47, .28); color: transparent; }
+.pv-kw { cursor: pointer; border-bottom: 2px dotted #E0212F; background: rgba(224, 33, 47, .06); border-radius: 2px; }
+.pv-kw:hover, .pv-kw.sel { background: rgba(224, 33, 47, .16); }
+.pv-kw.kw-pulse { animation: pvpulse 1.6s ease-in-out infinite; }
+@keyframes pvpulse { 50% { background: rgba(224, 33, 47, .22); } }
+.pv-hl { color: transparent; border-radius: 2px; background: rgba(255, 214, 0, .42); }
+.pv-hl.hl-green { background: rgba(90, 200, 120, .38); } .pv-hl.hl-blue { background: rgba(80, 160, 255, .32); } .pv-hl.hl-pink { background: rgba(255, 120, 170, .34); }
+.pv-anchor { position: absolute; left: 0; width: 1px; height: 1px; pointer-events: none; }
+.pv-no { position: absolute; right: 8px; bottom: 6px; font: 11px Arial, sans-serif; color: #777; background: rgba(255,255,255,.85); padding: 1px 6px; border-radius: 8px; pointer-events: none; }
+.pv-err { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #666; font: 14px Arial, sans-serif; background: #f6f6f6; }
+.pv-switch button { font-size: 13px; }
+/* the Reading view's important-word style must not show through: the printed word is already on the image */
+.pv-line .pv-kw, .pv-line .pv-kw.sel, .pv-line .pv-kw:hover { color: transparent !important; font-weight: inherit !important; text-decoration: none !important; -webkit-text-fill-color: transparent; }
+
+/* Page view with the explanation open on a laptop: the topic list folds away so the
+   printed page keeps a readable size beside the panel */
+@media (min-width:1001px){
+  .sreader.has-side.pv-on{grid-template-columns:0 minmax(0,1fr) 400px}
+  .sreader.has-side.pv-on .srail{overflow:hidden;padding:0;border:0}
+}

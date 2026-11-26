@@ -20,6 +20,7 @@ REASONS = {
     "ocr_empty": "OCR returned nothing for this region",
     "watermark": "logo or watermark repeated across pages",
     "outside_page": "bbox falls outside the page box",
+    "joined_into_figure": "part of a figure: joined into it (a piece, or a label beside it)",
 }
 
 

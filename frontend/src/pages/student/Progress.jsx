@@ -19,9 +19,9 @@ export default function Progress() {
         <div className="today">
           <div><span className="ic"><Icon n="fire" /></span><div><div className="v">{d.streak ? plural(d.streak, 'day') : 'No streak yet'}</div><div className="l">Study streak</div></div></div>
           <div><span className="ic"><Icon n="clock" /></span><div><div className="v">{hm(month)}</div><div className="l">Studied in the last 30 days</div></div></div>
-          <div><Ring value={acc} max={100} size={52} stroke={6}><span style={{ fontSize: 12 }}>{acc}%</span></Ring><div><div className="v">{plural(d.practised, 'question')}</div><div className="l">Practised, {acc}% right</div></div></div>
+          <div><Ring value={acc} max={100} size={52} stroke={6}><span style={{ fontSize: 12 }}>{d.practised ? acc + '%' : '-'}</span></Ring><div><div className="v">{plural(d.practised, 'question')}</div><div className="l">{d.practised ? `Practised, ${acc}% right` : 'None practised yet'}</div></div></div>
         </div>
-        {empty && <div className="card empty">Your progress shows here once you start reading or practising. <Link to="/student" style={{ color: 'var(--red)', fontWeight: 650 }}>Go to Home</Link></div>}
+        {empty && <div className="card empty">Your progress shows here once you start reading or practising. <Link to="/student/books" style={{ color: 'var(--red)', fontWeight: 650 }}>Open my books</Link></div>}
         {month > 0 && <div className="card"><div className="card-h"><h3>Last 30 days</h3><span className="sub">{hm(month)} in total</span></div>
           <div className="card-b"><div className="bars30" role="img" aria-label={`Minutes studied each day for the last 30 days, ${month} in total`}>{d.days.map(x => <i key={x.day} className={x.minutes ? '' : 'zero'} title={`${day(x.day)}: ${x.minutes} min`} style={{ height: (x.minutes / max * 100) + '%' }} />)}</div></div></div>}
         <div className="row">

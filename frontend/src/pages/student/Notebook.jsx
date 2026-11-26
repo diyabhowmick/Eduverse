@@ -39,7 +39,7 @@ export default function Notebook() {
     {data && !items.length && <div className="card empty nb-empty"><Icon n="note" s={28} /><b>Nothing here yet</b>
       <span>In any book, select words and choose Note, Highlight or Voice. Tap the star on an explanation to save it.</span></div>}
     <div className="nb-grid">{items.map(it => it.t === 'n'
-      ? <NoteCard key={'n' + it.n.id} n={it.n} onOpen={open} onDelete={del} onCard={card} />
+      ? <NoteCard key={'n' + it.n.id} n={it.n} onOpen={open} onDelete={del} onCard={card} onSaved={() => { toast('Saved'); load() }} />
       : <div key={'s' + it.s.id} className="sv-card">
         <div className="sv-where"><b className="k-saved">Saved explanation</b><span>{it.s.path.join(' › ') || it.s.term}</span></div>
         <div className="sv-body"><b>{it.s.term}</b> <MathText text={it.s.text.length > 260 ? it.s.text.slice(0, 260) + '...' : it.s.text} /></div>

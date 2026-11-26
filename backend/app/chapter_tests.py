@@ -31,14 +31,32 @@ def section_titles(ch) -> dict:
     return {s["id"]: ((s.get("number") or "") + " " + (s.get("title") or "")).strip() for s in ch.get("sections", [])}
 
 
+NOT_FACTS = {"exercises", "learning_objectives", "activity", "problem", "keywords", "concept_map", "references", "internet", "ict"}
+
+
+def _fact_blocks(blocks):
+    """Running text that states facts: not questions to the student, aims, or activities."""
+    for b in blocks:
+        if b.get("type") == "box":
+            if b.get("kind") not in NOT_FACTS:
+                yield from _fact_blocks(b.get("children") or [])
+            continue
+        yield b
+
+
+def _statement(s: str) -> bool:
+    return s.endswith(".") and "____" not in s and not re.match(r"^\(?[a-z0-9]{1,3}[.)]\s", s, re.I) \
+        and not re.match(r"^(explain|give|name|describe|list|write|draw|define|state|find|select|match|take|put|wait|why|what|how)\b", s, re.I)
+
+
 def sentences(ch):
     """(sentence, section id) for every sentence of running text in the chapter."""
     out = []
-    for b in walk(ch.get("blocks", [])):
+    for b in _fact_blocks(ch.get("blocks", [])):
         texts = [b.get("text", "")] if b.get("type") == "paragraph" else [i.get("text", "") for i in b.get("items", [])] if b.get("type") == "list" else []
         for t in texts:
             for s in re.split(r"(?<=[.!?])\s+(?=[A-Z])", _strip(t)):
-                if len(s.split()) >= 5:
+                if len(s.split()) >= 5 and _statement(s):
                     out.append((s, b.get("section", "")))
     return out
 
@@ -64,8 +82,23 @@ def figures(ch):
     return [b for b in walk(ch.get("blocks", [])) if b.get("type") == "figure" and (b.get("caption") or (b.get("desc") or {}).get("summary"))]
 
 
+def _case_like(old: str, new: str) -> str:
+    if old.isupper():
+        return new.upper()
+    if old[:1].isupper():
+        return new[:1].upper() + new[1:]
+    return new.lower()
+
+
 def _opts(rng, right, wrong):
-    pool = [right] + wrong[:3]
+    # never the same option twice, and never a second copy of the right answer
+    seen, picked = {_norm(right)}, []
+    for w in wrong:
+        if _norm(w) and _norm(w) not in seen:
+            seen.add(_norm(w)); picked.append(w)
+        if len(picked) == 3:
+            break
+    pool = [right] + picked
     rng.shuffle(pool)
     return [{"key": LETTERS[i], "text": t} for i, t in enumerate(pool)], LETTERS[pool.index(right)]
 
@@ -89,25 +122,63 @@ def rules(data: dict, chapter_no: int, seed: int = 7) -> list[dict]:
             continue
         s, sec = cands[0]
         blank = pat.sub("______", s, count=1)
-        others = [x["term"] for x in all_kw if _norm(x["term"]) != _norm(term)]
+        others = [x["term"] for x in all_kw if _norm(x["term"]) != _norm(term) and not re.search(r"\b" + re.escape(x["term"]) + r"\b", s, re.I)
+                  and _norm(term) not in _norm(x["term"]) and _norm(x["term"]) not in _norm(term)]
         others += [t for t in terms_pool(chapters) if _norm(t) != _norm(term) and _norm(t) not in map(_norm, others) and _norm(t) not in _norm(s)]
         rng.shuffle(others)
         q = {"section": sec, "section_title": titles.get(sec, ""), "source": s, "level": "easy",
              "explanation": k.get("definition") or s, "text": "Fill in the blank: " + blank}
         if len(others) >= 3:
-            q["options"], q["answer"] = _opts(rng, term, others)
+            # every choice in the same case as the gap, so the capital letter does not give the answer away
+            at = pat.search(s); start = at.start() == 0 if at else False
+            fix = (lambda x: x[:1].upper() + x[1:].lower()) if start else (lambda x: x if x.isupper() else x.lower())
+            q["options"], q["answer"] = _opts(rng, fix(term), [fix(o) for o in others])
             q["qtype"] = "mcq"
         else:
             q["qtype"], q["options"], q["answer"] = "fill", [], term
         out.append(q)
 
-        # What does the word mean? Needs three other definitions to choose from.
-        defs = [x["definition"] for x in all_kw if x.get("definition") and _norm(x["term"]) != _norm(term)]
-        if k.get("definition") and len(defs) >= 3:
-            rng.shuffle(defs)
-            o, a = _opts(rng, k["definition"], defs)
-            out.append({"section": sec, "section_title": titles.get(sec, ""), "source": k["definition"], "level": "medium", "qtype": "mcq",
-                        "text": f"Which of these is true about {term}?", "options": o, "answer": a, "explanation": k["definition"]})
+        # Which sentence explains the word? The other choices are true sentences from the book about
+        # other things, so each must not mention this word (or share the right sentence), or two would be right.
+        if k.get("definition"):
+            right = k["definition"]
+            stem = re.compile(r"\b" + re.escape(term.rstrip("s")) + r"s?\b", re.I)
+            defs = [x["definition"] for x in all_kw if x.get("definition") and _norm(x["term"]) != _norm(term)
+                    and _norm(x["definition"]) != _norm(right) and not stem.search(x["definition"])
+                    and not re.search(r"\b" + re.escape(x["term"].rstrip("s")) + r"s?\b", right, re.I)]
+            if len({_norm(d) for d in defs}) >= 3:
+                rng.shuffle(defs)
+                o, a = _opts(rng, right, defs)
+                out.append({"section": sec, "section_title": titles.get(sec, ""), "source": right, "level": "medium", "qtype": "mcq",
+                            "text": f"Which sentence from your book explains \u201c{term}\u201d?", "options": o, "answer": a, "explanation": right})
+
+    # Hard: spot the wrong statement. One book sentence has a word swapped for another of the
+    # chapter's words, so it says something false; the three others are the book's own sentences.
+    terms = [k["term"] for k in ch.get("keywords", []) if len(k["term"]) > 2]
+    used = set()
+    for s, sec in sents:
+        if len(out) and sum(1 for q in out if q["level"] == "hard") >= max(2, len(ch.get("keywords", [])) // 3):
+            break
+        here = [t for t in terms if re.search(r"\b" + re.escape(t) + r"\b", s, re.I)]
+        if not here or _norm(s) in used:
+            continue
+        t = here[0]
+        swap = [u for u in terms if _norm(u) != _norm(t) and not re.search(r"\b" + re.escape(u.rstrip("s")), s, re.I)
+                and _norm(t) not in _norm(u) and _norm(u) not in _norm(t)]
+        if not swap:
+            continue
+        u = rng.choice(swap)
+        false = re.sub(r"\b" + re.escape(t) + r"\b", lambda m: _case_like(m.group(0), u), s, count=1, flags=re.I)
+        trues = [x for x, _ in sents if _norm(x) != _norm(s) and _norm(x) != _norm(false)]
+        trues = list(dict.fromkeys(trues))
+        if len(trues) < 3:
+            continue
+        rng.shuffle(trues)
+        o, a = _opts(rng, false, trues)
+        used.add(_norm(s))
+        out.append({"section": sec, "section_title": titles.get(sec, ""), "source": s, "level": "hard", "qtype": "mcq",
+                    "text": "One of these sentences is wrong. Which one?", "options": o, "answer": a,
+                    "explanation": f"The book says: {s}"})
 
     all_figs = [f for c in chapters for f in figures(c)]
     for f in figures(ch):
