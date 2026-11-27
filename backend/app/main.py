@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings
@@ -66,6 +67,31 @@ def _content_missing(request, exc):
 # reason was only ever in the server log, which the person uploading cannot
 # see. Put the reason in the response for whoever runs the platform, and always
 # write the traceback to the log with a mark that is easy to search for.
+# A rejected request has to come back as a 422 that can actually be sent.
+# FastAPI echoes the offending input back inside the error body, so when the
+# input is a number JSON cannot represent — 1e309 parses to inf — building the
+# 422 itself raised "Out of range float values are not JSON compliant" and the
+# request ended as a 500. Anything JSON cannot carry is written as text here,
+# and the {loc, msg} shape the frontend reads is left exactly as it was.
+@app.exception_handler(RequestValidationError)
+def _bad_request(request, exc):
+    import math
+    from fastapi.responses import JSONResponse
+
+    def clean(v):
+        if v is None or isinstance(v, (str, int, bool)):
+            return v
+        if isinstance(v, float):
+            return v if math.isfinite(v) else repr(v)
+        if isinstance(v, dict):
+            return {str(k): clean(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [clean(x) for x in v]
+        return str(v)
+
+    return JSONResponse(status_code=422, content={"detail": clean(exc.errors())})
+
+
 @app.exception_handler(Exception)
 def _unhandled(request, exc):
     import traceback
@@ -189,11 +215,51 @@ def _threads():
     to_thread.current_default_thread_limiter().total_tokens = THREADS
 
 
+def _schema_lock(fn):
+    """Let only one web worker touch the schema at a time.
+
+    The container runs uvicorn with more than one worker, and every one of them
+    runs this startup. `create_all`, `add_missing_columns` and
+    `relax_legacy_columns` are not safe to run side by side: on a database that
+    does not have the tables yet, two workers both find `plans` missing and
+    both try to create it. The loser dies with "table plans already exists" and
+    uvicorn then stops the whole container, so the service never comes up.
+
+    A lock file makes them take turns. Whoever waits finds the work already
+    done and does nothing, because all three steps only act on what is missing.
+    """
+    import os, time, tempfile, contextlib
+    from pathlib import Path
+    lock = Path(tempfile.gettempdir()) / "ev_schema.lock"
+    fd = None
+    for _ in range(240):                       # up to ~2 minutes
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            break
+        except FileExistsError:
+            try:                               # a lock left behind by a killed process
+                if time.time() - lock.stat().st_mtime > 120:
+                    lock.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            time.sleep(0.5)
+    try:
+        fn()
+    finally:
+        if fd is not None:
+            with contextlib.suppress(Exception):
+                os.close(fd)
+                lock.unlink()
+
+
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(engine)
-    add_missing_columns()
-    relax_legacy_columns()
+    def _schema():
+        Base.metadata.create_all(engine)
+        add_missing_columns()
+        relax_legacy_columns()
+    _schema_lock(_schema)
     with SessionLocal() as db:
         ensure_core(db)
         # Keys saved before v44 were plain text; writing each setting back stores them encrypted.

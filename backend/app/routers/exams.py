@@ -773,6 +773,21 @@ class SubmitIn(BaseModel):
     unsure: list[int] = []
 
 
+def _secs(v) -> int:
+    """Seconds spent on one question, from whatever the client sent.
+
+    This was a bare `int(v)`, which raised on anything that is not a number and
+    returned a 500 in the middle of submitting a mock test. The value is only
+    ever a stopwatch reading, so an unusable one is worth nothing and is read
+    as zero rather than losing the paper. Clamped to a day so a wrong clock
+    cannot store a nonsense time either.
+    """
+    try:
+        return max(0, min(int(v), 86400))
+    except (TypeError, ValueError):
+        return 0
+
+
 @srouter.post("/mock/{aid}/submit")
 def submit_mock(aid: int, body: SubmitIn, db: Session = Depends(get_db), me=Depends(student)):
     a = db.get(MockAttempt, aid)
@@ -806,9 +821,9 @@ def submit_mock(aid: int, body: SubmitIn, db: Session = Depends(get_db), me=Depe
                 from .. import study as S
                 S.record(db, me.id, "exam", q, given, ok if given else None, book_id=a.book_id, origin="Mock test", not_sure=qid in body.unsure)
         results.append({**q_out(q), "subject": subject_of(q.section), "given": given, "correct": (ok if given else False) if auto else None,
-                        "self_check": not auto, "time": int(body.times.get(str(qid), 0))})
+                        "self_check": not auto, "time": _secs(body.times.get(str(qid), 0))})
     a.answers, a.score, a.total, a.submitted_at = body.answers, score, total, datetime.utcnow()
-    a.times, a.time_taken = {k: int(v) for k, v in body.times.items()}, max(0, body.time_taken)
+    a.times, a.time_taken = {str(k): _secs(v) for k, v in body.times.items()}, max(0, body.time_taken)
     db.commit()
     return {"id": a.id, "title": a.title, "score": score, "total": total, "right": right, "wrong": wrong, "blank": blank,
             "mark_correct": a.mark_correct, "mark_wrong": a.mark_wrong, "time_taken": a.time_taken, "minutes": a.minutes, "results": results}

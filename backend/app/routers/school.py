@@ -31,8 +31,10 @@ def seats_used(db, sid):
 
 
 def feature(db, key):
+    """Is this feature switched on? Merged over the defaults — see student.feature."""
     s = db.get(Setting, "features")
-    return (s.value if s else FEATURES).get(key, False)
+    saved = s.value if s and isinstance(s.value, dict) else {}
+    return {**FEATURES, **saved}.get(key, False)
 
 
 # ---------- overview and profile ----------

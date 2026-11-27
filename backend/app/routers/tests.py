@@ -288,13 +288,29 @@ def result(db, a: ChapterAttempt) -> dict:
             "questions": rows, "by_section": list(secs.values())}
 
 
+def _as_qid(k):
+    """A question id out of whatever the client used as a key, or None.
+
+    This was a bare `int(k)`. Anything that is not a number raised ValueError
+    and took the whole submission down with a 500 — and because the attempt is
+    only marked finished at the end, the student lost a test they had already
+    sat. JavaScript writes the key "undefined" the moment a question id is
+    missing, so a single slip in the browser was enough to trigger it. An
+    unusable key is now simply skipped, exactly as an unknown id already was.
+    """
+    try:
+        return int(k)
+    except (TypeError, ValueError):
+        return None
+
+
 @srouter.post("/tests/{aid}/submit")
 def submit(aid: int, body: SubmitIn, db: Session = Depends(get_db), me=Depends(student)):
     a = _mine(db, me, aid)
     if a.finished_at:
         return result(db, a)
     qs = {q.id: q for q in db.query(ChapterQuestion).filter(ChapterQuestion.id.in_(a.question_ids))}
-    a.answers = {str(k): str(v)[:200] for k, v in body.answers.items() if int(k) in qs}
+    a.answers = {str(k): str(v)[:200] for k, v in body.answers.items() if _as_qid(k) in qs}
     a.wrong = [qid for qid in a.question_ids if qid in qs and not T.is_right(qs[qid], a.answers.get(str(qid), ""))]
     a.score = len(a.question_ids) - len(a.wrong)
     from .. import study as S

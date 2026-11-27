@@ -26,8 +26,18 @@ def owned_ids(db, me: User) -> dict:
 
 
 def feature(db, key):
+    """Is this feature switched on?
+
+    The saved row used to be read instead of the defaults, not on top of them.
+    A row written before a feature existed, or saved with one key missing, then
+    turned that feature off for everybody — and the Platform screen lists only
+    eight of the flags, so there was nothing to see and nothing to put right.
+    `exam_track` is the one this caught. Merging over the defaults is how
+    /api/taxonomy has always read these, so this just makes the rest agree.
+    """
     s = db.get(Setting, "features")
-    return (s.value if s else FEATURES).get(key, False)
+    saved = s.value if s and isinstance(s.value, dict) else {}
+    return {**FEATURES, **saved}.get(key, False)
 
 
 def book_card(b: Book, prog=None, how=None):
@@ -393,6 +403,93 @@ def _layout(b):
         return _j.loads(C._store().get(f"{C.reader_key(b)}/layout/index.json"))
     except Exception:
         return {"available": False}
+
+
+def streak_days(db, uid: int) -> int:
+    """Days in a row with some reading, counting back from today."""
+    days = {r.day for r in db.query(StudentDay).filter(
+        StudentDay.user_id == uid, StudentDay.seconds > 0,
+        StudentDay.day >= (date.today() - timedelta(days=400)).isoformat())}
+    n, d = 0, date.today()
+    while d.isoformat() in days:
+        n += 1
+        d -= timedelta(days=1)
+    return n
+
+
+def _test_stars(score: int, out_of: int) -> int:
+    """How well a unit test went, as 0-3 stars."""
+    if not out_of:
+        return 0
+    pct = score / out_of
+    return 3 if pct >= 0.9 else 2 if pct >= 0.7 else 1 if pct >= 0.5 else 0
+
+
+@router.get("/books/{bid}/map")
+def learning_map(bid: int, db: Session = Depends(get_db), me=Depends(student)):
+    """The book as a road: one stretch per chapter, one stop per section.
+
+    Everything here is read from what the platform already records — the
+    sections this student has opened, their chapter-test attempts and their
+    daily rows. Nothing new is stored, so the map is simply another way of
+    looking at the progress the reader has always been writing.
+    """
+    from ..models import ChapterAttempt
+    from .tests import counts
+    b = readable_book(db, me, bid)
+    data = C.load_ro(b, C.reader_key(b))
+    p = db.get(StudentProgress, (me.id, bid))
+    seen = set((p.sections if p else None) or [])
+
+    best: dict[int, ChapterAttempt] = {}
+    for a in db.query(ChapterAttempt).filter(ChapterAttempt.user_id == me.id, ChapterAttempt.book_id == bid):
+        if not a.finished_at or a.level == "daily":
+            continue                      # Daily 5 spans the book; it is not a unit's own test
+        cur = best.get(a.chapter)
+        if cur is None or a.score > cur.score:
+            best[a.chapter] = a
+    per_chapter = counts(db, bid)
+
+    chapters, current = [], None
+    for ch in data["chapters"]:
+        # A section with no number is front matter (an introduction, a cover
+        # page). The reader already leaves those out of the percentage, so the
+        # road leaves them out too and the two agree.
+        secs = [s for s in ch["sections"] if s.get("number")]
+        if not secs:
+            continue
+        out = [{"id": s["id"], "number": s["number"], "title": s["title"], "done": s["id"] in seen} for s in secs]
+        if current is None:
+            nxt = next((s for s in out if not s["done"]), None)
+            if nxt:
+                current = {"chapter": ch["number"], "section": nxt["id"]}
+        a = best.get(ch["number"])
+        done = sum(1 for s in out if s["done"])
+        chapters.append({
+            "number": ch["number"], "title": ch["title"], "sections": out,
+            "done": done, "total": len(out), "complete": done == len(out),
+            "test": {"questions": per_chapter.get(ch["number"], 0),
+                     "taken": a is not None,
+                     "score": a.score if a else 0,
+                     "out_of": a.total if a else 0,
+                     "stars": _test_stars(a.score, a.total) if a else 0},
+        })
+
+    total = sum(c["total"] for c in chapters)
+    done = sum(c["done"] for c in chapters)
+    # Every stop finished, and every unit test cleared: the end of the road.
+    if current is None and chapters:
+        last = chapters[-1]
+        current = {"chapter": last["number"], "section": last["sections"][-1]["id"]}
+    return {
+        "book": {"id": b.id, "title": b.title, "subject": b.subject, "grade": b.grade, "board": b.board},
+        "chapters": chapters, "current": current,
+        "done": done, "total": total,
+        "percent": round(done / total * 100) if total else 0,
+        "stars": sum(c["test"]["stars"] for c in chapters),
+        "streak": streak_days(db, me.id),
+        "position": (p.position if p else None) or {},
+    }
 
 
 class ProgressIn(BaseModel):

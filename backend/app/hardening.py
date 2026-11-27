@@ -168,7 +168,13 @@ MAGIC = {
     ".pdf": [b"%PDF-"], ".docx": [b"PK\x03\x04"], ".xlsx": [b"PK\x03\x04"], ".xlsm": [b"PK\x03\x04"], ".doc": [b"\xd0\xcf\x11\xe0"],
     ".png": [b"\x89PNG"], ".jpg": [b"\xff\xd8\xff"], ".jpeg": [b"\xff\xd8\xff"], ".webp": [b"RIFF"], ".gif": [b"GIF8"],
 }
-_PDF_ACTIVE = re.compile(rb"/(JavaScript|JS|Launch|EmbeddedFile|OpenAction\s*<<[^>]*?/S\s*/JavaScript)\b")
+# What actually makes a PDF dangerous is an *action*: a dictionary that says
+# /S /JavaScript or /S /Launch. The previous pattern also matched the bare
+# tokens /JS, /Launch, /EmbeddedFile and /JavaScript anywhere in the file, and
+# those turn up in ordinary publisher PDFs — /JS appears nine times in the Tamil
+# Nadu Class 8 Science book as a plain name in the catalogue, six times in the
+# English one. Both real textbooks were refused and neither contained a script.
+_PDF_ACTIVE = re.compile(rb"/S\s*/(JavaScript|Launch)\b")
 
 
 def check_upload(name: str, head: bytes, size: int, allowed: tuple[str, ...], whole: Path | None = None):
@@ -183,7 +189,76 @@ def check_upload(name: str, head: bytes, size: int, allowed: tuple[str, ...], wh
     if ext == ".pdf":
         scan = head if whole is None else _pdf_scan(whole)
         if _PDF_ACTIVE.search(scan):
-            raise HTTPException(422, "This PDF contains scripts or embedded programs, so it was refused. Print it to a new PDF and upload that.")
+            # A book is worth more than the script in it. Take the script out
+            # and carry on; only refuse if it cannot be taken out.
+            if whole is None:
+                raise HTTPException(422, "This PDF contains a script or a launch action, so it was refused. "
+                                         "Print it to a new PDF and upload that.")
+            gone = strip_pdf_actions(whole)
+            if gone is None:
+                raise HTTPException(422, "This PDF contains a script or a launch action and it could not be removed, "
+                                         "so the file was refused. Print it to a new PDF and upload that.")
+            print(f"[EV UPLOAD] {name}: removed active content before processing ({', '.join(gone) or 'none left'})", flush=True)
+
+
+def strip_pdf_actions(p: Path):
+    """Take the scripts and launch actions out of a PDF, in place.
+
+    Returns a list of what was removed, or None if the file could not be
+    rewritten — only then is the upload refused. This runs on the rare book
+    that really does carry an action, not on every upload, so the cost of
+    rewriting a large file is only paid when there is something to remove.
+    """
+    try:
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import NameObject, ArrayObject
+    except Exception:
+        return None
+    removed = []
+    try:
+        writer = PdfWriter(clone_from=str(p))
+        root = writer._root_object
+        for key in ("/OpenAction", "/AA"):
+            if key in root:
+                del root[NameObject(key)]
+                removed.append("document " + key)
+        names = root.get("/Names")
+        names = names.get_object() if names is not None else None
+        if names is not None:
+            for key in ("/JavaScript", "/EmbeddedFiles"):
+                if key in names:
+                    del names[NameObject(key)]
+                    removed.append("/Names" + key)
+        for i, page in enumerate(writer.pages):
+            if "/AA" in page:
+                del page[NameObject("/AA")]
+                removed.append(f"page {i + 1} /AA")
+            annots = page.get("/Annots")
+            if not annots:
+                continue
+            keep = []
+            for a in annots:
+                try:
+                    act = a.get_object().get("/A")
+                    kind = str(act.get_object().get("/S")) if act is not None else ""
+                except Exception:
+                    keep.append(a)
+                    continue
+                if kind in ("/JavaScript", "/Launch"):
+                    removed.append(f"page {i + 1} annotation {kind}")
+                    continue
+                keep.append(a)
+            if len(keep) != len(annots):
+                page[NameObject("/Annots")] = ArrayObject(keep)
+        tmp = p.with_name(p.name + ".clean")
+        with open(tmp, "wb") as f:
+            writer.write(f)
+        os.replace(tmp, p)
+    except Exception as e:
+        print(f"[EV UPLOAD] could not strip active content from {p.name}: {type(e).__name__}: {e}", flush=True)
+        return None
+    # Whatever the structure said, make sure nothing is left that still reads as an action.
+    return removed if not _PDF_ACTIVE.search(_pdf_scan(p)) else None
 
 
 def _pdf_scan(p: Path) -> bytes:

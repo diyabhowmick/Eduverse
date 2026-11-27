@@ -62,6 +62,19 @@ def get_setting(key: str, db: Session = Depends(get_db), _=Depends(super_admin))
 def put_setting(key: str, value: dict, db: Session = Depends(get_db), me=Depends(super_admin)):
     if key not in ALL:
         raise HTTPException(404, "Unknown setting")
+    # A saved row replaces the defaults wholesale wherever it is read, so a
+    # value of the wrong shape, or one simply missing a key, silently changes
+    # behaviour with nothing on screen to show it — that is how `exam_track`
+    # ended up off for everyone. Check the shape here, and fill any missing
+    # key from the defaults so a partial save cannot shadow them.
+    if not isinstance(value, dict):
+        raise HTTPException(422, f"The {key} setting has to be an object")
+    base = ALL[key]
+    if isinstance(base, dict):
+        unknown = sorted(k for k in value if k not in base)
+        if unknown:
+            raise HTTPException(422, f"These are not {key} settings: {', '.join(unknown)}")
+        value = {**base, **value}
     s = db.get(Setting, key)
     if key == "ai" and s:  # keep saved keys when the client sends the mask back
         for name, p in (value.get("providers") or {}).items():
@@ -71,6 +84,8 @@ def put_setting(key: str, value: dict, db: Session = Depends(get_db), me=Depends
             raise HTTPException(422, "Provider must be ollama, anthropic or openai")
     if key == "permissions":
         for perm, roles in value.items():
+            if not isinstance(roles, (list, tuple, set)):
+                raise HTTPException(422, f"Permission '{perm}' has to be a list of roles")
             if "super_admin" not in roles and perm.startswith("manage_"):
                 raise HTTPException(422, "Super Admin must keep every manage permission")
     if s:

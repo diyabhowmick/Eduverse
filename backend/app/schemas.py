@@ -44,7 +44,7 @@ class SchoolIn(BaseModel):
 
 class PlanIn(BaseModel):
     name: str
-    price_per_seat: float = 0
+    price_per_seat: float = Field(0, ge=0, le=10_000_000)
     billing_cycle: str = "yearly"
     credits_per_seat: int = 0
     max_books: int = 0
@@ -68,7 +68,12 @@ class BookIn(BaseModel):
     medium: str = "English"
     edition: str = ""
     pages: int = 0
-    price: float = 0
+    # A price with no bounds was accepted and stored. Negative showed a minus
+    # price in the store; 1e309 stored `inf`, and every page that returns a
+    # book then died on "Out of range float values are not JSON compliant" —
+    # the catalogue, the student home and the store at once, with no way back
+    # through the interface because the catalogue is one of the broken pages.
+    price: float = Field(0, ge=0, le=1_000_000)
     status: str = "upcoming"
     track: str = "textbook"
     level: str = "school"
@@ -86,7 +91,7 @@ class BookPatch(BaseModel):
     grade: str | None = None
     medium: str | None = None
     edition: str | None = None
-    price: float | None = None
+    price: float | None = Field(None, ge=0, le=1_000_000)
     track: str | None = None
     level: str | None = None
     exam: str | None = None

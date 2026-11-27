@@ -48,6 +48,7 @@ const RPapers = lazy(() => import('./pages/reviewer/Papers'))
 const RTests = lazy(() => import('./pages/reviewer/Tests'))
 const RExplain = lazy(() => import('./pages/reviewer/Explanations'))
 const RTestBooks = lazy(() => import('./pages/reviewer/Tests').then(m => ({ default: m.TestBooks })))
+const SMap = lazy(() => import('./pages/student/LearningMap'))
 const SNotebook = lazy(() => import('./pages/student/Notebook'))
 const SRevise = lazy(() => import('./pages/student/Revise'))
 const STest = lazy(() => import('./pages/student/ChapterTest'))
@@ -123,14 +124,14 @@ function TeacherShell() {
   )
 }
 
-const ST_NAV = [['', 'home', 'Home'], ['books', 'book', 'My books'], ['notebook', 'note', 'Notebook'], ['revise', 'repeat', 'Revise'], ['progress', 'chart', 'Progress'], ['store', 'price', 'Store']]
+const ST_NAV = [['', 'home', 'Home'], ['map', 'target', 'Learning map'], ['books', 'book', 'My books'], ['notebook', 'note', 'Notebook'], ['revise', 'repeat', 'Revise'], ['progress', 'chart', 'Progress'], ['store', 'price', 'Store']]
 
 function StudentShell() {
   const u = auth.user(); const loc = useLocation(); const [due, setDue] = useState(0)
   useEffect(() => { api('/api/student/study/due').then(r => setDue(r.due)).catch(() => {}) }, [loc.pathname])
   return (
     <Layout nav={ST_NAV} base="/student" role={u?.school || 'Learner'} loginPath="/login/student" collapse={loc.pathname.includes('/read/')} counts={{ revise: due }}>
-      <Routes><Route index element={<SHome />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="notebook" element={<SNotebook />} /><Route path="revise" element={<SRevise />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /><Route path="test/:bid/:ch" element={<STest />} /><Route path="result/:aid" element={<SResult />} /></Routes>
+      <Routes><Route index element={<SHome />} /><Route path="map" element={<SMap />} /><Route path="map/:id" element={<SMap />} /><Route path="books" element={<SBooks />} /><Route path="store" element={<SStore />} /><Route path="notebook" element={<SNotebook />} /><Route path="revise" element={<SRevise />} /><Route path="progress" element={<SProgress />} /><Route path="read/:id" element={<SReader />} /><Route path="exam/:id" element={<SExam />} /><Route path="test/:bid/:ch" element={<STest />} /><Route path="result/:aid" element={<SResult />} /></Routes>
     </Layout>
   )
 }

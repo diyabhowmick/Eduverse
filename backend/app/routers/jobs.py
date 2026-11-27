@@ -1,4 +1,4 @@
-import contextlib, io, json, os, shutil, subprocess, sys, tempfile, threading, time, uuid, zipfile
+import contextlib, io, json, os, re, shutil, subprocess, sys, tempfile, threading, time, uuid, zipfile
 from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -351,6 +351,56 @@ PARTS: dict[str, dict] = {}
 _parts_lock = threading.Lock()
 
 
+def _meta(d: Path) -> Path:
+    return d / "meta.json"
+
+
+def _save_meta(u: dict):
+    """The few facts about an upload, on the shared disk beside its pieces."""
+    with contextlib.suppress(Exception):
+        _meta(u["dir"]).write_text(json.dumps({"filename": u["filename"], "by": u["by"],
+                                               "at": u["at"], "size": u["size"]}))
+
+
+def _count_parts(d: Path) -> int:
+    """Pieces received so far. meta.json and the assembled file are not pieces."""
+    return sum(1 for _ in d.glob("[0-9]*"))
+
+
+def _rec(uid: str) -> dict | None:
+    """The bookkeeping for one upload, from this process or from disk.
+
+    This used to be `PARTS.get(uid)` and nothing else. The container runs
+    uvicorn with more than one worker, so `/upload/start` can be handled by
+    worker A while a later piece lands on worker B. B had never heard of the
+    upload, answered 410 "no longer open", and the browser gave up part way
+    through — which is exactly what an 85 MB textbook upload looked like when
+    it "just failed", and why it failed only sometimes: it worked while the
+    browser held one connection and broke the moment that connection was
+    recycled.
+
+    The pieces were always written to a directory every worker can see, so the
+    record is simply rebuilt from there when this process does not have it.
+    """
+    u = PARTS.get(uid)
+    if u:
+        return u
+    if not uid or not re.fullmatch(r"[0-9a-f]{32}", uid):
+        return None                       # not an id we ever issued; never touch a path from it
+    d = PART_DIR / uid
+    if not d.is_dir():
+        return None
+    meta = {}
+    with contextlib.suppress(Exception):
+        meta = json.loads(_meta(d).read_text())
+    u = {"filename": meta.get("filename") or "upload.pdf", "dir": d, "by": meta.get("by", ""),
+         "at": meta.get("at") or time.time(), "size": int(meta.get("size") or 0),
+         "got": _count_parts(d)}
+    with _parts_lock:
+        PARTS[uid] = u
+    return u
+
+
 def _sweep_parts(hours=6):
     """Pieces left behind by an upload nobody finished."""
     for uid, u in list(PARTS.items()):
@@ -379,8 +429,10 @@ def upload_start(filename: str = Form(...), size: int = Form(0), me=Depends(supe
     uid = uuid.uuid4().hex
     d = PART_DIR / uid
     d.mkdir(parents=True, exist_ok=True)
+    u = {"filename": name, "dir": d, "by": me.email, "at": time.time(), "size": size, "got": 0}
     with _parts_lock:
-        PARTS[uid] = {"filename": name, "dir": d, "by": me.email, "at": time.time(), "size": size, "got": 0}
+        PARTS[uid] = u
+    _save_meta(u)          # so any worker can pick this upload up, not only this one
     return {"upload_id": uid, "part_size": PART_SIZE, "parts": -(-size // PART_SIZE) if size else 0}
 
 
@@ -388,23 +440,23 @@ def upload_start(filename: str = Form(...), size: int = Form(0), me=Depends(supe
 async def upload_part(upload_id: str = Form(...), index: int = Form(...), chunk: UploadFile = File(...),
                       me=Depends(super_admin)):
     """One piece of a file. Sending the same piece again simply overwrites it, so a retry is safe."""
-    u = PARTS.get(upload_id)
+    u = _rec(upload_id)
     if not u:
-        raise HTTPException(410, "This upload is no longer open — the server restarted, or it was left too long. Choose the file and start again.")
+        raise HTTPException(410, "This upload is no longer open — it was left too long, or the server was restarted. Choose the file and start again.")
     if index < 0 or index > 100000:
         raise HTTPException(422, "Bad piece number")
     data = await chunk.read()
     p = u["dir"] / f"{index:06d}"
     p.write_bytes(data)
     with _parts_lock:
-        u["got"] = sum(1 for _ in u["dir"].iterdir())
+        u["got"] = _count_parts(u["dir"])
         u["at"] = time.time()
     return {"index": index, "bytes": len(data), "pieces_received": u["got"]}
 
 
 def _assemble(uid: str) -> tuple[Path, str]:
     """Join the pieces into one file, in order, without holding it in memory."""
-    u = PARTS.get(uid)
+    u = _rec(uid)
     if not u:
         raise HTTPException(410, "This upload is no longer open. Choose the file and start again.")
     parts = sorted(u["dir"].glob("[0-9]*"))
