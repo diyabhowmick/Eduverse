@@ -1,0 +1,105 @@
+/* ---- large view for an explanation ----
+
+   The side panel does not move into a dialog. It stays exactly where it is in
+   the React tree and in the reader grid, and this class turns it into a centred
+   window. Moving it, or portalling it, would unmount ExplainPanel and throw away
+   the trail, the Eddie chat, the votes and the saved state, which is the one
+   thing the large view must not do.
+
+   This sheet loads after motion.css, which sizes the panel from --sw (the width
+   the divider sets). Every rule below is .sside.focus ..., two classes deep, so
+   it outranks motion.css's single-class rules and the --sw width gives way while
+   the window is open. --sw itself is left alone, so the student's remembered
+   split is still there on the way back. The divider is not rendered while the
+   window is open (Reader.jsx): it would have nothing to resize and would sit in
+   the window's tab order.
+
+   Everything here animates transform and opacity only. The reader grid keeps its
+   --sw column while the panel is out of flow, so the book never reflows. */
+
+/* Why the window needs this: .route-fx wraps every page and carries
+   `animation: mv-rise .34s both`, whose last keyframe is `transform: none`. Because the
+   fill mode keeps that keyframe applied, the computed transform is an identity matrix, not
+   `none` — and any transform makes an element the containing block for position:fixed. So
+   the window would centre on the content area, not the screen. Reader.jsx puts .ev-focus on
+   <body> while the window is open and this clears the leftover transform, which also lets
+   the veil cover the topbar and the nav rail instead of being trapped under them. */
+body.ev-focus .route-fx { animation: none; transform: none }
+
+.focus-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(14, 16, 20, .52);
+  backdrop-filter: blur(3px);
+  animation: fv-in .38s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+@keyframes fv-in { from { opacity: 0 } to { opacity: 1 } }
+
+@media (min-width: 1001px) {
+  .sside.focus {
+    position: fixed;
+    z-index: 61;
+    left: 50%;
+    top: 50%;
+    width: 90vw;
+    max-width: 1500px;
+    /* fits the explanation rather than always filling 88vh: a two-line definition in a
+       full-height window is mostly empty space. Long trails scroll inside it instead. */
+    height: auto;
+    min-height: min(440px, 60vh);
+    max-height: 88vh;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--bg);
+    box-shadow: 0 24px 70px rgba(10, 12, 16, .4);
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    /* the centring lives in the transform so the open can animate it */
+    transform: translate(-50%, -50%);
+    animation: fw-in .38s cubic-bezier(.2, .8, .2, 1) both;
+  }
+
+  /* grew from the panel on the right, rather than appearing from nowhere */
+  @keyframes fw-in {
+    from { transform: translate(-50%, -50%) translateX(7%) scale(.965); opacity: .55 }
+    to   { transform: translate(-50%, -50%) translateX(0)   scale(1);    opacity: 1 }
+  }
+
+  /* motion.css lays this out at width:var(--sw) with padding that centres the
+     cards inside the panel. In the window the window itself does the centring. */
+  .sside.focus .sside-in {
+    width: auto;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 4px 34px 40px;
+    animation: none;            /* the window itself is the animation */
+  }
+
+  .sside.focus .sside-h {
+    background: var(--bg);
+    padding-top: 22px;
+  }
+
+  .sside.focus .sside-h h2 { font-size: 27px }
+
+  /* roomier reading in the large view */
+  .sside.focus .xp-text,
+  .sside.focus .xp-bridge { font-size: 17px; line-height: 1.75 }
+  .sside.focus .scard { padding: 18px 20px }
+  .sside.focus .xc-in input { font-size: 15px }
+
+  /* In the large view the book's own words lead, then the explanation. */
+  .sside.focus .scard:not(.ai) { font-size: 15.5px; line-height: 1.7 }
+}
+
+/* Expand / Back to side control in the panel header */
+.sside-h .xp-grow { margin-left: auto }
+.sside.focus .sside-h .xp-grow { margin-left: auto }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-veil, .sside.focus { animation: none }
+}

@@ -7,6 +7,7 @@ import './polish.css'
 import './ux.css'
 import './motion.css'
 import './wide.css'
+import './focus.css'
 import ErrorBoundary, { isChunkError, reloadOnce, report } from './ErrorBoundary'
 
 // A deploy renames the screen files. Vite raises this when a tab opened before the deploy asks for one that is gone:

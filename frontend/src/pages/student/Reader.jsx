@@ -15,7 +15,9 @@ import '../../pageview.css'
 const SIZES = [['15.5px', 'Small'], ['17.5px', 'Medium'], ['19.5px', 'Large'], ['22px', 'Extra large']]
 const LEADS = [['1.6', 'Close'], ['1.8', 'Normal'], ['2.05', 'Loose']]
 const THEMES = [['', 'Light'], ['warm', 'Warm paper'], ['night', 'Night']]
-const loadLook = () => { try { return { size: '17.5px', lead: '1.8', theme: '', ...JSON.parse(localStorage.getItem('ev_reader') || '{}') } } catch { return { size: '17.5px', lead: '1.8', theme: '' } } }
+// `big` is "always open explanations in the large view" — it sits with the student's other
+// reader settings because that is where text size and colour already live.
+const loadLook = () => { try { return { size: '17.5px', lead: '1.8', theme: '', big: false, ...JSON.parse(localStorage.getItem('ev_reader') || '{}') } } catch { return { size: '17.5px', lead: '1.8', theme: '', big: false } } }
 
 // Desktop split between the book and the side panel (explain, notes, saved, mistakes): the share of their combined
 // width the panel takes. It opens wider than the book, since the explanation is what a tap asked for, and the
@@ -29,7 +31,10 @@ const sidePx = (split, room) => room > 0 ? Math.round(Math.min(Math.max(MIN_SIDE
 function LookSheet({ look, set, onClose }) {
   const row = (label, opts, k) => <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>{label}</div>
     <div className="seg">{opts.map(([v, l]) => <button key={v} type="button" className={look[k] === v ? 'on' : ''} onClick={() => set({ ...look, [k]: v })}>{l}</button>)}</div></div>
-  return <Sheet title="Reading comfort" onClose={onClose}><div className="rset">{row('Text size', SIZES, 'size')}{row('Line spacing', LEADS, 'lead')}{row('Page colour', THEMES, 'theme')}</div></Sheet>
+  return <Sheet title="Reading comfort" onClose={onClose}><div className="rset">{row('Text size', SIZES, 'size')}{row('Line spacing', LEADS, 'lead')}{row('Page colour', THEMES, 'theme')}
+    {row('Explanations open', [[false, 'Beside the book'], [true, 'Large']], 'big')}
+    <div className="muted" style={{ fontSize: 12.5, marginTop: -4 }}>Either way, press F to swap while you are reading, or drag the divider to resize.</div>
+  </div></Sheet>
 }
 
 const tex = l => { try { return katex.renderToString(l, { displayMode: true, throwOnError: false }) } catch { return l } }
@@ -79,6 +84,11 @@ export default function Reader() {
   const [look, setLookState] = useState(loadLook); const [lookOpen, setLookOpen] = useState(false)
   const setLook = l => { setLookState(l); localStorage.setItem('ev_reader', JSON.stringify(l)) }
   const narrow = useNarrow(1000)
+  // The large view. The panel never moves in the tree — see focus.css — so ExplainPanel
+  // keeps its trail, its chat and its votes when the student grows or shrinks it. The
+  // divider's split is untouched by it and is still there on the way back.
+  const [focus, setFocus] = useState(false)
+  const sideRef = useRef(null), cameFrom = useRef(null)
   // Page view (the printed page) on a wide screen when this book has it; Reading view on a phone. The choice is remembered.
   const [viewPick, setViewPick] = useState(() => { try { return localStorage.getItem('ev_view') || '' } catch { return '' } })
   const pickView = v => { setViewPick(v); try { localStorage.setItem('ev_view', v) } catch { /* private mode */ } }
@@ -191,7 +201,75 @@ export default function Reader() {
       setSelBtn({ t, x: r.left, y: r.bottom + 6, para: host?.closest('p,li')?.textContent || '', block: host?.closest('[id]')?.id || '', section: host?.closest('[data-sec]')?.dataset.sec || cur || '' })
     }, 0)
   }
-  function close() { setPanel(null); setSel(null); setDraft(null); document.querySelectorAll('.kw.sel').forEach(x => x.classList.remove('sel')) }
+  function close() { setPanel(null); setSel(null); setDraft(null); setFocus(false); document.querySelectorAll('.kw.sel').forEach(x => x.classList.remove('sel')) }
+
+  /* ---- the large view ---- */
+  const grow = on => {
+    if (narrow) return                       // the phone already has the full-screen sheet
+    if (on && !focus) cameFrom.current = document.activeElement
+    setFocus(on)
+  }
+  // Open large straight away when the student has asked for that.
+  useEffect(() => { if (panel === 'explain' && sel && look.big && !narrow) grow(true) }, [sel?.key, panel])
+  useEffect(() => { if (narrow && focus) setFocus(false) }, [narrow, focus])
+
+  // F grows and shrinks it, Esc shrinks it. Never while the student is typing to Eddie.
+  useEffect(() => {
+    if (!panel || narrow) return
+    const k = e => {
+      const t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      if (e.key === 'Escape' && focus) { e.preventDefault(); grow(false) }
+      else if ((e.key === 'f' || e.key === 'F') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); grow(!focus) }
+    }
+    addEventListener('keydown', k)
+    return () => removeEventListener('keydown', k)
+  }, [panel, focus, narrow])
+
+  // While it is a window it behaves like one: the page behind does not scroll, Tab stays
+  // inside it, and focus goes back to the word that opened it.
+  useEffect(() => {
+    if (!focus) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    // .route-fx keeps an identity transform forever (mv-rise with fill-mode both ends at
+    // transform:none, which computes to matrix(1,0,0,1,0,0) rather than none). A transform
+    // makes an element the containing block for position:fixed, so without this the window
+    // centres on the content area and sits ~68px right of where it should. focus.css clears
+    // it while the window is open; the entrance animation is long finished by then.
+    document.body.classList.add('ev-focus')
+    const el = sideRef.current
+    const sel1 = 'a[href],button:not([disabled]),input,textarea,select,[tabindex]:not([tabindex="-1"])'
+    const trap = e => {
+      if (e.key !== 'Tab' || !el) return
+      const f = [...el.querySelectorAll(sel1)].filter(x => x.offsetParent !== null)
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+      else if (!el.contains(document.activeElement)) { e.preventDefault(); first.focus() }
+    }
+    addEventListener('keydown', trap)
+    return () => {
+      removeEventListener('keydown', trap)
+      document.body.style.overflow = prev
+      document.body.classList.remove('ev-focus')
+      const back = cameFrom.current || document.querySelector('.kw.sel')
+      if (back && document.contains(back)) try { back.focus() } catch { /* gone from the page */ }
+    }
+  }, [focus])
+
+  // On a phone the explanation is a sheet, so the back button should close it rather than
+  // leave the book.
+  useEffect(() => {
+    if (!narrow || !panel) return
+    history.pushState({ evPanel: 1 }, '')
+    const pop = () => close()
+    addEventListener('popstate', pop)
+    return () => {
+      removeEventListener('popstate', pop)
+      if (history.state?.evPanel) history.back()
+    }
+  }, [narrow, panel])
   function noteAt(b) { setDraft({ book_id: +id, chapter: ch.number, section: b.section || cur || '', block_id: b.block || '', quote: b.t.slice(0, 1200) }); setPanel('notes') }
   async function highlight(b) {
     try { await api('/api/student/study/notes', { method: 'POST', body: { kind: 'highlight', book_id: +id, chapter: ch.number, section: b.section || '', block_id: b.block || '', quote: b.t.slice(0, 1200), color: 'yellow' } }); loadMine() }
@@ -230,6 +308,9 @@ export default function Reader() {
   }
   const side = <>
     <div className="sside-h"><div><div className="k">{panel === 'explain' && sel ? 'Explained for you' : 'Unit ' + ch.number}</div><h2>{panel === 'explain' && sel ? sel.term : secTitle}</h2></div>
+      {!narrow && <button type="button" className="btn ghost sm xp-grow" onClick={() => grow(!focus)}
+        aria-label={focus ? 'Back to the side panel' : 'Open large'} title={focus ? 'Back to side (Esc)' : 'Open large (F)'}>
+        <Icon n="scan" s={16} />{focus ? 'Back to side' : 'Expand'}</button>}
       {!narrow && <button className="btn ghost sm" aria-label="Close" onClick={close}><Icon n="x" s={18} /></button>}</div>
     <div className="rd-tabs" role="tablist">{[['explain', 'Explain'], ['notes', 'Notes'], ['saved', 'Saved'], ['mistakes', 'Mistakes']].map(([k, l]) =>
       <button key={k} role="tab" aria-selected={panel === k} className={panel === k ? 'on' : ''} onClick={() => setPanel(k)}>{l}{counts[k] ? <em>{counts[k]}</em> : null}</button>)}</div>
@@ -237,7 +318,7 @@ export default function Reader() {
       {bk.rules.exam_mode && <div className="note" style={{ marginBottom: 10 }}>{bk.rules.exam_mode}: exam answers only</div>}
       <div className="scard"><div className="h">What your book says</div>{sel.definition || 'Your book uses this word without defining it here.'}</div>
       <div className="scard ai"><div className="h">Explanation</div>
-        <ExplainPanel key={sel.key} styles={bk.rules.allowed_depths} onSaved={loadMine} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
+        <ExplainPanel key={sel.key} layout={focus ? 'wide' : 'side'} styles={bk.rules.allowed_depths} onSaved={loadMine} request={{ scope: 'book', book_id: +id, chapter: ch.number, keyword_id: sel.keyword_id || null, block_id: sel.block_id || null,
           term: sel.term, paragraph: sel.paragraph, definition: sel.definition, figures: sel.figs.map(f => [f.number && 'Figure ' + f.number, f.caption, f.desc?.summary].filter(Boolean).join(': ')) }} /></div>
       {sel.figs.map(f => <div className="scard" key={f.id}><div className="h">{f.number ? 'Figure ' + f.number : 'Figure'}</div><BookImg src={`/api/content/${id}/${f.image}`} alt="" /><div className="muted" style={{ fontSize: 13 }}>{f.caption}</div></div>)}</>)}
     {panel === 'notes' && <div className="rd-list">
@@ -288,10 +369,14 @@ export default function Reader() {
             {bk.chapters.find(c => c.number > ch.number) && <button className="btn primary lg inline" onClick={() => setChNo(bk.chapters.find(c => c.number > ch.number).number)}>Next unit<Icon n="right" s={18} /></button>}</div>
         </div>
       </article>
-      <aside className="sside" id="reader-side" aria-hidden={!panel || narrow}>
+      {focus && <div className="focus-veil" onMouseDown={() => grow(false)} aria-hidden="true" />}
+      <aside ref={sideRef} className={'sside' + (focus ? ' focus' : '')} id="reader-side" aria-hidden={!panel || narrow}
+        {...(focus ? { role: 'dialog', 'aria-modal': true, 'aria-label': (panel === 'explain' && sel?.term) || 'This unit' } : {})}>
         {panel && !narrow && <div className="sside-in" key={panel === 'explain' ? sel?.key : 'study'}>{side}</div>}
       </aside>
-      {panel && !narrow && <div className="sdivider" role="separator" tabIndex={0} aria-orientation="vertical" aria-controls="reader-side"
+      {/* the divider has nothing to resize while the panel is a centred window, and it must
+          not sit in the window's tab order, so it is not rendered then */}
+      {panel && !narrow && !focus && <div className="sdivider" role="separator" tabIndex={0} aria-orientation="vertical" aria-controls="reader-side"
         aria-label="Resize the book and the side panel" aria-valuemin={0} aria-valuemax={100} aria-valuenow={bookPct} aria-valuetext={`Book ${bookPct}%, panel ${100 - bookPct}%`}
         title="Drag to resize, or use the arrow keys. Double-click to reset." onPointerDown={dragStart} onKeyDown={dragKey}
         onDoubleClick={() => { setSplit(SPLIT_DEFAULT); saveSplit(SPLIT_DEFAULT) }}><i /></div>}

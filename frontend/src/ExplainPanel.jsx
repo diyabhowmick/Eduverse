@@ -56,7 +56,9 @@ function Reply({ m, onOpen, onDone }) {
   </div>
 }
 
-export default function ExplainPanel({ request, styles = Object.keys(STYLE), onSaved }) {
+// layout: 'side' is the resizable panel beside the book; 'wide' is the large view, which
+// reads at a larger size.
+export default function ExplainPanel({ request, styles = Object.keys(STYLE), onSaved, layout = 'side' }) {
   const [style, setStyle] = useState(styles.includes('concept_clarity') ? 'concept_clarity' : styles[0])
   const [trail, setTrail] = useState([]); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [pick, setPick] = useState(null); const [doubt, setDoubt] = useState(''); const [report, setReport] = useState(null)
@@ -121,7 +123,9 @@ export default function ExplainPanel({ request, styles = Object.keys(STYLE), onS
   }
   const deeper = t => { if (hint) { setHint(false); markSeen('links') } ask({ parent_id: top.id, term: t }, 'push') }
 
-  return <div className="xp">
+  // No source quote here: every screen that passes a `definition` already shows the book's
+  // own words above this panel, and repeating them was the first thing that looked wrong.
+  return <div className={'xp' + (layout === 'wide' ? ' xp-wide' : '')}>
     {trail.length > 1 && <nav className="xp-chips" aria-label="Explanation path">{trail.map((x, i) => <span key={i} className="xp-chip-w">
       {i > 0 && <Icon n="right" s={12} />}
       <button type="button" className={'xp-chip' + (i === trail.length - 1 ? ' on' : '')} disabled={i === trail.length - 1 || busy} onClick={() => setTrail(t => t.slice(0, i + 1))}>
