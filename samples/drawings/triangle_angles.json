@@ -1,0 +1,24 @@
+{
+  "kind": "geometry",
+  "width": 440,
+  "height": 320,
+  "points": {"A": {}, "B": {}, "C": {}},
+  "segments": [
+    {"from": "A", "to": "B", "length": {"value": 6, "unit": "cm"}, "label": "6 cm"},
+    {"from": "B", "to": "C", "length": {"value": 5, "unit": "cm"}, "label": "5 cm"},
+    {"from": "C", "to": "A", "length": {"value": 7, "unit": "cm"}, "label": "7 cm"}
+  ],
+  "angles": [
+    {"points": ["C", "A", "B"]},
+    {"points": ["A", "B", "C"]},
+    {"points": ["B", "C", "A"]}
+  ],
+  "labels": [
+    {"text": "A", "point": "A"},
+    {"text": "B", "point": "B"},
+    {"text": "C", "point": "C"},
+    {"text": "44.4°", "angle": ["C", "A", "B"]},
+    {"text": "78.5°", "angle": ["A", "B", "C"]},
+    {"text": "57.1°", "angle": ["B", "C", "A"]}
+  ]
+}

@@ -6,7 +6,8 @@ An error means the drawing must not be shown.
   length        a stated segment length disagrees with the drawing
   label_length  a side's label ("5 cm") disagrees with the drawing
   angle         a stated angle, or a right-angle mark, disagrees with the drawing
-  overlap       two labels cover each other
+  label_angle   an angle's label ("60°") disagrees with the drawing
+  overlap       two labels cover each other (labels only: a label touching a line is not checked)
   outside       something is drawn outside the canvas
   unsafe        the SVG holds something that could run, link or load: it must stay inert when inlined
 """
@@ -30,6 +31,9 @@ ANGLE_TOL = 0.5
 # nothing else. "5", "5 cm" and "5cm" qualify; "about 5 cm", "side = 5" and "Figure 5" do not, and are ignored
 # without a finding: a label that cannot be read is not evidence of a mistake.
 QUANTITY = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]{1,6})?\s*$")
+# The same idea for an angle's label: a number and optionally a degree sign or word, nothing else. "60", "60°",
+# "60 deg" and "60 degrees" qualify; "roughly 60", "angle A" and "60 cm" do not and are ignored without a finding.
+DEGREES = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(?:°|deg|degrees?)?\s*$", re.I)
 # A label's unit may differ from the drawing's ("50 mm" on a drawing in cm). Lengths that convert are compared
 # after conversion; a label in a unit not listed here, or on a drawing whose own unit is not listed, is skipped.
 MM_PER = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "ft": 304.8}
@@ -72,7 +76,7 @@ def check(spec, solved, svg: str) -> list:
         m = QUANTITY.match(lb["text"])
         if not m:
             continue
-        said, said_unit = float(m.group(1)), (m.group(2) or "").lower()
+        said_unit = (m.group(2) or "").lower()
         a, b = lb["segment"]
         real = math.dist(pts[a], pts[b]) / scale         # in the drawing's unit
         shown = f"{real:.3g}{u}"
@@ -81,13 +85,18 @@ def check(spec, solved, svg: str) -> list:
                 continue    # a unit we cannot convert is not evidence of a mistake
             real = real * MM_PER[unit.lower()] / MM_PER[said_unit]
             shown = f"{real:.3g} {said_unit} ({shown.strip()})"
-        # A label printed as "7" stands for anything that rounds to 7: half its last digit either way. That band
-        # widens as the unit coarsens ("1 cm" would accept 0.5 to 1.5 cm), so the label must also be within
-        # LABEL_TOL of what is measured. The tighter of the two wins. The 1e-9 only absorbs float noise.
-        decimals = len(m.group(1).split(".")[1]) if "." in m.group(1) else 0
-        allowed = min(0.5 * 10 ** -decimals, LABEL_TOL * real) + 1e-9 * max(1.0, real)
-        if abs(real - said) > allowed:
+        if not _label_fits(m.group(1), real):
             add("error", "label_length", f"Side {a}{b} is labelled {lb['text'].strip()!r} but the drawing makes it {shown}.")
+    for lb in layout_labels(spec, solved):
+        if not lb["angle"]:
+            continue
+        m = DEGREES.match(lb["text"])
+        if not m:
+            continue
+        p, v, q = lb["angle"]
+        real = _angle(pts[p], pts[v], pts[q])
+        if real is not None and not _label_fits(m.group(1), real):
+            add("error", "label_angle", f"Angle {p}{v}{q} is labelled {lb['text'].strip()!r} but the drawing makes it {real:.1f}°.")
     for a in spec.get("angles", []):
         want = 90.0 if a.get("right") else S.quantity(a["degrees"])[0] if "degrees" in a else None
         if want is None:
@@ -155,6 +164,16 @@ def check(spec, solved, svg: str) -> list:
                 if not -0.5 <= val <= (w if k.startswith("x") or k == "cx" else h) + 0.5:
                     add("error", "outside", f"A <{tag}> is drawn at {k}={val:g}, outside the {w}x{h} canvas.")
     return found
+
+
+def _label_fits(number: str, real: float) -> bool:
+    """Whether a label's number, as printed, agrees with what is measured, in the same unit (a length or degrees).
+    A label printed as "7" stands for anything that rounds to 7: half its last digit either way. That band
+    widens as the unit coarsens ("1 cm" would accept 0.5 to 1.5 cm), so the label must also be within LABEL_TOL
+    of what is measured. The tighter of the two wins. The 1e-9 only absorbs float noise."""
+    decimals = len(number.split(".")[1]) if "." in number else 0
+    allowed = min(0.5 * 10 ** -decimals, LABEL_TOL * real) + 1e-9 * max(1.0, real)
+    return abs(real - float(number)) <= allowed
 
 
 def _angle(p, v, q):

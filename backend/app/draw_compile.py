@@ -54,7 +54,7 @@ def compile_svg(spec, solved) -> str:
         out.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3" fill="{INK}"/>')
 
     for lb in layout_labels(spec, solved):
-        colour = MUT if lb["segment"] else INK
+        colour = MUT if lb["segment"] or lb["angle"] else INK     # measurements grey, names black
         out.append(_text(lb["cx"], lb["cy"] + FONT_SIZE * 0.35, lb["text"], FONT_SIZE, colour, "middle"))
     out.append("</svg>")
     return "".join(out)

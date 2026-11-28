@@ -237,6 +237,109 @@ def test_underdetermined_points_are_refused_not_guessed():
     assert solved is None and errs[0].startswith("Cannot place these points: A, B, C, D"), errs
 
 
+# ---- triangles from three loose segments
+
+def loose(*sides, points="ABC"):
+    """Segments only, no polygon. sides: (from, to, length or None)."""
+    return {"points": {p: {} for p in points},
+            "segments": [{"from": a, "to": b, **({"length": n} if n is not None else {})} for a, b, n in sides]}
+
+
+def test_loose_segments_3_4_5_make_a_triangle():
+    solved, svg, found = build(loose(("A", "B", 3), ("B", "C", 4), ("C", "A", 5)))
+    assert abs(units_apart(solved, "A", "B") - 3) < 1e-9
+    assert abs(units_apart(solved, "B", "C") - 4) < 1e-9
+    assert abs(units_apart(solved, "C", "A") - 5) < 1e-9
+    assert errors(found) == [], found
+
+
+def test_loose_segments_in_another_order_give_the_same_measurements():
+    solved, svg, found = build(loose(("C", "A", 5), ("B", "C", 4), ("A", "B", 3)))
+    for (a, b), n in ((("A", "B"), 3), (("B", "C"), 4), (("C", "A"), 5)):
+        assert abs(units_apart(solved, a, b) - n) < 1e-9
+    assert errors(found) == [], found
+
+
+def test_loose_segments_1_2_10_meet_the_same_triangle_inequality_as_a_polygon():
+    spec = loose(("A", "B", 1), ("B", "C", 2), ("C", "A", 10))
+    solved, errs = draw_solve.solve(spec)
+    assert solved is None and len(errs) == 1, errs
+    assert errs[0] == "Triangle ABC cannot exist: side CA = 10 is not shorter than AB + BC = 3.", errs
+    # the same sentence, word for word, as the polygon route: one check, reached from both
+    as_polygon = {**spec, "polygons": [{"points": ["A", "B", "C"]}]}
+    assert draw_solve.solve(as_polygon)[1] == errs
+
+
+def test_loose_segments_with_a_side_missing_its_length_are_refused():
+    solved, errs = draw_solve.solve(loose(("A", "B", 3), ("B", "C", 4), ("C", "A", None)))
+    assert solved is None and errs[0].startswith("Cannot place these points: A, B, C."), errs
+    assert "AB, BC and CA close a triangle but CA has no length." in errs[0], errs
+
+
+def test_open_path_of_three_segments_is_not_a_triangle():
+    solved, errs = draw_solve.solve(loose(("A", "B", 3), ("B", "C", 4), ("C", "D", 5), points="ABCD"))
+    assert solved is None and errs[0].startswith("Cannot place these points: A, B, C, D."), errs
+    assert "AB, BC and CD join A, B, C and D without closing a triangle" in errs[0], errs
+
+
+def test_duplicated_side_and_shared_side_are_refused():
+    solved, errs = draw_solve.solve(loose(("A", "B", 3), ("A", "B", 3), ("A", "C", 4)))
+    assert solved is None and "The side AB is listed more than once" in errs[0], errs
+    # ABC is a triangle; ACD shares AC with it, and which side of AC D falls on is not stated
+    spec = loose(("A", "B", 3), ("B", "C", 4), ("C", "A", 5), ("C", "D", 4), ("D", "A", 3), points="ABCD")
+    solved, errs = draw_solve.solve(spec)
+    assert solved is None and errs[0].startswith("Cannot place these points: D."), errs
+    assert "shares the side AC with another triangle" in errs[0], errs
+
+
+def test_triangle_polygon_is_unchanged():
+    # segments listed in an order that, read as loose segments, would start from C: the polygon still decides
+    spec = {"points": {"A": {}, "B": {}, "C": {}},
+            "polygons": [{"points": ["A", "B", "C"], "shape": "triangle"}],
+            "segments": [{"from": "C", "to": "A", "length": 5}, {"from": "B", "to": "C", "length": 3},
+                         {"from": "A", "to": "B", "length": 4}]}
+    solved, svg, found = build(spec)
+    w = solved["world"]
+    assert w["A"] == (0.0, 0.0) and w["B"] == (4.0, 0.0), w
+    assert abs(w["C"][0] - 4) < 1e-9 and abs(w["C"][1] - 3) < 1e-9, w
+    assert errors(found) == [], found
+
+
+# ---- angle labels checked against the measured angle
+
+def test_right_angle_labelled_90_passes():
+    spec = {**TRIANGLE_345, "labels": TRIANGLE_345["labels"] + [{"text": "90°", "angle": ["A", "B", "C"]}]}
+    assert errors(build(spec)[2]) == []
+
+
+def test_equilateral_angles_labelled_60_pass():
+    spec = loose(("P", "Q", 6), ("Q", "R", 6), ("R", "P", 6), points="PQR")
+    spec["angles"] = [{"points": ["R", "P", "Q"]}, {"points": ["P", "Q", "R"]}, {"points": ["Q", "R", "P"]}]
+    spec["labels"] = [{"text": "60", "angle": a["points"]} for a in spec["angles"]]
+    found = build(spec)[2]
+    assert errors(found) == [], found
+
+
+def test_right_angle_labelled_60_is_an_error():
+    spec = {**TRIANGLE_345, "labels": [{"text": "60°", "angle": ["A", "B", "C"]}]}
+    bad = errors(build(spec)[2])
+    assert len(bad) == 1, bad
+    assert bad[0]["code"] == "label_angle", bad
+    assert bad[0]["message"] == "Angle ABC is labelled '60°' but the drawing makes it 90.0°.", bad
+
+
+def test_angle_labels_that_are_not_a_plain_size_in_degrees_are_ignored():
+    for text in ("roughly 60", "angle A", "60 cm"):
+        spec = {**TRIANGLE_345, "labels": [{"text": text, "angle": ["A", "B", "C"]}]}
+        assert build(spec)[2] == [], text
+
+
+def test_label_on_an_angle_that_does_not_exist_is_rejected():
+    spec = {**TRIANGLE_345, "labels": [{"text": "60°", "angle": ["B", "A", "C"]}]}
+    errs = draw_spec.validate(spec)
+    assert errs == ["Label 1 is on the angle BAC, which is not in angles."], errs
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in [(k, v) for k, v in dict(globals()).items() if k.startswith("test_") and callable(v)]:

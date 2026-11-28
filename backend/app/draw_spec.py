@@ -14,11 +14,21 @@ script cannot ask for anything this module has not agreed to draw. Pure Python, 
       "circles":  [{"centre": "O", "r": 2}]  or  [{"through": ["A", "B", "C"]}]
       "angles":   [{"points": ["A", "B", "C"], "degrees": 60, "right": false}]   B is the vertex
       "labels":   [{"text": "A", "point": "A"}, {"text": "3 cm", "segment": ["A", "B"]},
+                   {"text": "60°", "angle": ["A", "B", "C"]},       an angle listed in angles, B the vertex
                    {"text": "Not to scale", "x": 0.5, "y": 0.05}]   x and y are fractions of the canvas
     }
 
 A length or an angle is a number, or {"value": number, "unit": "cm"}. Every length in one drawing shares one
 unit. Angles are in degrees.
+
+Known gaps, not yet expressible or checked:
+  - Collinearity. There is no way to say a point lies on a segment, so an altitude, median or angle bisector
+    cannot be a constraint. A triangle with one drawn in is refused: solving ABD on its own would put D off BC.
+  - An angle's label is kept clear of its own two arms, but not of other lines: in a flat triangle the label of
+    a very wide angle (about 150 degrees) can reach the opposite side. A sharp angle pushes its label out along
+    the bisector; under about 10 degrees the drawing may not fit at all and is refused. The gate checks labels
+    against labels, never against lines.
+  - A segment label's reference is only checked to name two points, not a segment between them (see validate).
 """
 import json
 import math
@@ -39,7 +49,7 @@ SEGMENT_KEYS = {"from", "to", "length", "label"}
 POLYGON_KEYS = {"points", "closed", "shape"}
 CIRCLE_KEYS = {"centre", "r", "through"}
 ANGLE_KEYS = {"points", "degrees", "right"}
-LABEL_KEYS = {"text", "point", "segment", "x", "y"}
+LABEL_KEYS = {"text", "point", "segment", "angle", "x", "y"}
 QUANTITY_KEYS = {"value", "unit"}
 
 
@@ -201,13 +211,18 @@ def validate(spec) -> list:
             errs.append(f"{where} has no text.")
         else:
             _text(lb["text"], f"The text of {where.lower()}", errs)
-        anchors = [k for k in ("point", "segment") if k in lb] + (["position"] if "x" in lb or "y" in lb else [])
+        anchors = [k for k in ("point", "segment", "angle") if k in lb] + (["position"] if "x" in lb or "y" in lb else [])
         if len(anchors) != 1:
-            errs.append(f"{where} needs exactly one place: a point, a segment, or x and y.")
+            errs.append(f"{where} needs exactly one place: a point, a segment, an angle, or x and y.")
         elif "point" in lb:
             ref(lb["point"], where)
         elif "segment" in lb:
+            # Deliberately looser than an angle label: the two points must exist, a segment between them need not.
+            # Tightening this to match is a separate change.
             refs(lb["segment"], 2, where)
+        elif "angle" in lb:
+            if refs(lb["angle"], 3, where) and not _has_angle(spec, lb["angle"]):
+                errs.append(f"{where} is on the angle {''.join(lb['angle'])}, which is not in angles.")
         elif not all(is_number(lb.get(k)) and 0 <= lb[k] <= 1 for k in ("x", "y")):
             errs.append(f"{where} needs x and y as fractions of the canvas, from 0 to 1.")
 
@@ -219,6 +234,14 @@ def validate(spec) -> list:
         if len(units) > 1:
             errs.append(f"The lengths are in more than one unit ({', '.join(sorted(units))}); use one unit for the whole drawing.")
     return errs
+
+
+def _has_angle(spec, names) -> bool:
+    """An entry in angles with the same vertex and the same two arms, in either order."""
+    p, v, q = names
+    return any(isinstance(a, dict) and isinstance(a.get("points"), list) and len(a["points"]) == 3
+               and a["points"][1] == v and {a["points"][0], a["points"][2]} == {p, q}
+               for a in spec.get("angles", []))
 
 
 def _lengths(spec):
