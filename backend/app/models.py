@@ -408,6 +408,25 @@ class Explanation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class Drawing(Base):
+    """A drawing that goes with an explanation: a script (see draw_spec.py) compiled to SVG and checked by draw_check.py.
+    Reviewed before a student sees it; only a final drawing is shown. explanation_id is empty while a drawing is
+    compiled and checked before it is attached to anything."""
+    __tablename__ = "drawings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    explanation_id: Mapped[int | None] = mapped_column(ForeignKey("explanations.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="geometry")     # geometry
+    script: Mapped[str] = mapped_column(Text)                             # the JSON source
+    svg: Mapped[str] = mapped_column(Text, default="")                    # the compiled output
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate | final | rejected
+    checks: Mapped[list] = mapped_column(JSON, default=list)              # what the gate found: [{severity, code, message}]
+    model: Mapped[str] = mapped_column(String(80), default="")           # the model that wrote the script; empty when written by hand
+    source: Mapped[str] = mapped_column(String(20), default="authored")   # authored | generated
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class ExplainLink(Base):
     """A word inside a level 1 explanation that leads to a shared level 2 explanation.
     The level 2 text is written once per book; bridge is the one line that ties it back to this explanation."""

@@ -1,0 +1,18 @@
+{
+  "kind": "geometry",
+  "width": 400,
+  "height": 300,
+  "points": {"A": {}, "B": {}, "C": {}},
+  "polygons": [{"points": ["A", "B", "C"], "closed": true}],
+  "segments": [
+    {"from": "A", "to": "B", "length": {"value": 4, "unit": "cm"}, "label": "4 cm"},
+    {"from": "B", "to": "C", "length": {"value": 3, "unit": "cm"}, "label": "3 cm"},
+    {"from": "C", "to": "A", "length": {"value": 5, "unit": "cm"}, "label": "5 cm"}
+  ],
+  "angles": [{"points": ["A", "B", "C"], "right": true}],
+  "labels": [
+    {"text": "A", "point": "A"},
+    {"text": "B", "point": "B"},
+    {"text": "C", "point": "C"}
+  ]
+}
