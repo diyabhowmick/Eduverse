@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLoad, Page } from '../../ui'
+import { scenery, MapScene } from './mapScenery'
 
 /* The book as a road.
 
@@ -51,7 +52,14 @@ export default function LearningMap() {
   // there is, so it fits a phone without the stops falling off the right.
   const [scale, setScale] = useState(1)
   const [roadW, setRoadW] = useState(ROAD_W)
+  const [boxW, setBoxW] = useState(0)
   const nodes = useMemo(() => (data ? layout(data.chapters, roadW) : []), [data, roadW])
+  // The landscape shares the road's coordinates and scale, but spans the whole box: at 2560 that is far wider
+  // than the road. The height is the same sum as `height` below.
+  const scene = useMemo(() => (data && boxW ? scenery({
+    nodes, roadW, sceneW: Math.max(roadW, Math.ceil(boxW / scale)), bookId: id, here: data.current?.section,
+    height: (nodes.length ? nodes[nodes.length - 1].y : TOP) + PAD,
+  }) : null), [data, nodes, roadW, boxW, scale, id])
 
   useEffect(() => {
     const el = scroller.current
@@ -60,6 +68,7 @@ export default function LearningMap() {
       const room = el.clientWidth - 16
       setScale(Math.min(1, room / ROAD_W))
       setRoadW(Math.round(Math.max(ROAD_W, Math.min(ROAD_MAX, room))))
+      setBoxW(el.clientWidth)
     }
     fit()
     const ro = new ResizeObserver(fit)
@@ -74,6 +83,19 @@ export default function LearningMap() {
     const el = scroller.current
     el.scrollTop = Math.max(0, (here ? here.y : 0) * scale - el.clientHeight / 2)
   }, [data, nodes, scale])
+
+  // Motion is paused while the map scrolls, and for anything scrolled out of sight (styles.css). Classes are set
+  // directly, not through state, so scrolling never re-renders the map.
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || !scene) return
+    let t
+    const onScroll = () => { el.classList.add('scrolling'); clearTimeout(t); t = setTimeout(() => el.classList.remove('scrolling'), 150) }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    const io = new IntersectionObserver(es => es.forEach(e => e.target.classList.toggle('idle', !e.isIntersecting)), { root: el })
+    el.querySelectorAll('.map-cloud, .map-node.here').forEach(n => io.observe(n))
+    return () => { el.removeEventListener('scroll', onScroll); clearTimeout(t); io.disconnect() }
+  }, [scene])
 
   /* ---- no book chosen: offer the ones they have ---- */
   if (!id) {
@@ -121,7 +143,10 @@ export default function LearningMap() {
       <div className="map-scroll" ref={scroller}>
         <div className="map-fit" style={{ height: height * scale }}>
         <div className="map-road" style={{ height, width: roadW, marginLeft: -roadW / 2, transform: `scale(${scale})` }}>
+          <MapScene scene={scene} height={height} />
           <svg width={roadW} height={height} aria-hidden="true">
+            {/* the road's edge: every segment once more, wider and darker, under all the surfaces */}
+            {nodes.slice(0, -1).map((n, i) => <path key={'e' + i} className={'map-edge' + (i < travelled ? ' done' : '')} d={link(n, nodes[i + 1])} />)}
             {nodes.slice(0, -1).map((n, i) => {
               // Red is the road already travelled, so it stops at the first
               // stop not yet done. Without that the road runs red past a

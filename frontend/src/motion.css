@@ -156,7 +156,7 @@ a.hero:hover{transform:translateY(-2px);box-shadow:var(--lift)}
 .section-h h3{letter-spacing:-.015em}
 
 @media (prefers-reduced-motion:reduce){
-  .route-fx,.route-fx *,.sside-in,.sdivider,.xp-chip-w,.xp-body,.xp-hint,.xp-see,.xc-row,.xc-msg,.rv-detail,.kw-pulse{animation:none!important}
+  .route-fx,.route-fx *,.sside-in,.sdivider,.xp-chip-w,.xp-body,.xp-hint,.xp-see,.xc-row,.xc-msg,.rv-detail,.kw-pulse,.map-cloud,.map-node.here::before{animation:none!important}
   .sreader,.sdivider,.tile,.cont-card,.hero,.btn,.tile-cover .cover-card{transition:none!important}
   a.tile:hover,.cont-card:hover,a.hero:hover{transform:none}
 }

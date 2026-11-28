@@ -421,27 +421,53 @@ ol.own-labels li.sub, ul.own-labels li.sub { margin-left: 1.8em; }
 
 .map-scroll{position:relative;height:calc(100vh - 210px);min-height:420px;overflow-y:auto;overflow-x:hidden;
   border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
-  background:radial-gradient(760px 420px at 82% 4%,#F2F9F4 0,rgba(255,255,255,0) 60%),
-             radial-gradient(640px 400px at 4% 92%,#EEF4FB 0,rgba(255,255,255,0) 58%),var(--bg)}
+  background:var(--map-ground);scrollbar-width:thin;scrollbar-color:var(--line-2) var(--panel);
+  --map-sky:#EAF3FA;--map-ground:#F3F8EF;--map-hill-1:#E4F0DC;--map-hill-2:#DAEBD1;--map-hill-3:#ECF4E5;
+  --map-leaf-a:#93C58A;--map-leaf-b:#AFD596;--map-pine:#75B184;--map-trunk:#B48A66;--map-cloud:#FFFFFF;
+  --map-prop:#7D8FAD;--map-prop-fill:#DCE6F5;--map-edge:#C9CED6}
+/* dusk, not the day dimmed: blue-grey sky, deep teal hills, muted foliage */
+[data-theme=dark] .map-scroll{--map-sky:#1B2233;--map-ground:#141A1E;--map-hill-1:#1A2A25;--map-hill-2:#21342D;
+  --map-hill-3:#182420;--map-leaf-a:#2C5544;--map-leaf-b:#35614C;--map-pine:#284C40;--map-trunk:#4E3D30;
+  --map-cloud:#2A3347;--map-prop:#8A9BBC;--map-prop-fill:#24304A;--map-edge:#0E1116}
 .map-fit{position:relative;width:100%;overflow:hidden}
 /* the road (620px or wider, see LearningMap.jsx) cannot centre with auto margins inside a narrower phone
-   column, so it is pinned to the middle and scaled about that point. */
-.map-road{position:absolute;left:50%;width:620px;margin-left:-310px;transform-origin:top center}
+   column, so it is pinned to the middle and scaled about that point. Its width and margin-left are set inline. */
+.map-road{position:absolute;left:50%;transform-origin:top center}
 .map-road svg{position:absolute;left:0;top:0;pointer-events:none}
+.map-edge{fill:none;stroke:var(--map-edge);stroke-width:32;stroke-linecap:round}
+.map-edge.done{stroke:var(--red-ink)}
 .map-seg{fill:none;stroke:#E4E6EA;stroke-width:26;stroke-linecap:round}
-.map-seg.done{stroke:var(--red);opacity:.9}
+.map-seg.done{stroke:var(--red)}
+[data-theme=dark] .map-seg:not(.done){stroke:#394150}
+
+/* the landscape (mapScenery.jsx): decoration only, behind the road */
+.map-scene{position:absolute;top:0;pointer-events:none}
+.map-scene .map-tile{overflow:visible}
+.map-sky-a{stop-color:var(--map-sky)}.map-sky-b{stop-color:var(--map-ground)}
+.map-hill.h1{fill:var(--map-hill-1)}.map-hill.h2{fill:var(--map-hill-2)}.map-hill.h3{fill:var(--map-hill-3)}
+.map-leaf.a{fill:var(--map-leaf-a)}.map-leaf.b{fill:var(--map-leaf-b)}.map-pine{fill:var(--map-pine)}.map-trunk{fill:var(--map-trunk)}
+.map-prop-line{stroke:var(--map-prop)}.map-prop-dot{fill:var(--map-prop)}.map-prop-fill{fill:var(--map-prop-fill)}
+/* clouds and the pulse on the current stop: transform and opacity only, paused while scrolling or out of sight,
+   off under prefers-reduced-motion (motion.css) */
+.map-cloud{position:absolute;pointer-events:none;will-change:transform;animation:map-drift var(--dur,60s) ease-in-out var(--delay,0s) infinite alternate}
+.map-cloud path{fill:var(--map-cloud)}
+@keyframes map-drift{from{transform:translateX(-28px)}to{transform:translateX(28px)}}
+.map-node.here::before{content:"";position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;
+  border:2px solid var(--red);opacity:0;pointer-events:none;animation:map-pulse 2.8s ease-out infinite}
+@keyframes map-pulse{0%{transform:scale(1);opacity:.5}70%,100%{transform:scale(1.75);opacity:0}}
+.map-scroll.scrolling .map-cloud,.map-cloud.idle,.map-scroll.scrolling .map-node.here::before,.map-node.here.idle::before{animation-play-state:paused}
 
 .map-node{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;
   background:none;border:none;padding:0;cursor:pointer;z-index:3}
 .map-node .disc{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:15px;
-  border:3px solid var(--bg);background:#CFD5DD;color:#fff;box-shadow:0 3px 0 #A9B2BD,0 6px 14px rgba(20,22,28,.2)}
-.map-node.done .disc{background:var(--red);box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.32)}
+  border:3px solid var(--bg);background:#CFD5DD;color:var(--ink-2);box-shadow:0 3px 0 #A9B2BD,0 6px 14px rgba(20,22,28,.2)}
+.map-node.done .disc{background:var(--red);color:#fff;box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.32)}
 .map-node.here .disc{background:var(--bg);color:var(--red);border-color:var(--red);
   box-shadow:0 0 0 7px var(--red-soft),0 3px 0 #EBB8BC,0 7px 16px rgba(224,33,47,.26)}
 .map-node.boss .disc{width:68px;height:68px;font-size:25px}
 .map-node.boss.open .disc{background:var(--bg);border-color:var(--red);box-shadow:0 0 0 7px var(--red-soft),0 3px 0 #EBB8BC}
 .map-node.boss.done .disc{background:#E8A317;box-shadow:0 3px 0 #B87B08,0 7px 18px rgba(232,163,23,.4)}
-.map-node.boss.attempted .disc{background:var(--red);box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.3)}
+.map-node.boss.attempted .disc{background:var(--red);color:#fff;box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.3)}
 .map-node:disabled{cursor:default;opacity:.65}
 .map-node:not(:disabled):hover .disc{transform:translateY(-2px)}
 .map-stars{position:absolute;top:-13px;font-size:12px;color:#FFC219;letter-spacing:1px;text-shadow:0 1px 0 #B87B08}
@@ -467,3 +493,15 @@ ol.own-labels li.sub, ul.own-labels li.sub { margin-left: 1.8em; }
   padding:6px 12px;border:1px solid var(--line);background:var(--panel)}
 .map-chip.gold{background:var(--warn-soft);border-color:#F0DCAE;color:#7A5200}
 .map-chip.fire{background:var(--warn-soft);border-color:#F2CFB4;color:#8A4A12}
+[data-theme=dark] .map-label{background:rgba(22,24,29,.88)}
+[data-theme=dark] .map-banner .tt{background:rgba(30,33,39,.95)}
+[data-theme=dark] .map-banner .num{color:var(--bg)}
+[data-theme=dark] .map-banner.done .num{color:#fff}
+[data-theme=dark] .map-node .disc{background:#394150;box-shadow:0 3px 0 #232831,0 6px 14px rgba(0,0,0,.45)}
+[data-theme=dark] .map-node.here .disc{background:var(--bg);box-shadow:0 0 0 7px var(--red-soft),0 3px 0 #5C1F26,0 7px 16px rgba(224,33,47,.26)}
+[data-theme=dark] .map-node.boss.open .disc{background:var(--bg);box-shadow:0 0 0 7px var(--red-soft),0 3px 0 #5C1F26}
+[data-theme=dark] .map-node.done .disc{background:var(--red);box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.32)}
+[data-theme=dark] .map-node.boss.done .disc{background:#E8A317;box-shadow:0 3px 0 #B87B08,0 7px 18px rgba(232,163,23,.4)}
+[data-theme=dark] .map-node.boss.attempted .disc{background:var(--red);box-shadow:0 3px 0 var(--red-ink),0 7px 16px rgba(224,33,47,.3)}
+[data-theme=dark] .map-chip.gold{border-color:#5A4720;color:#F0C766}
+[data-theme=dark] .map-chip.fire{border-color:#5E3F23;color:#F3AC6B}
