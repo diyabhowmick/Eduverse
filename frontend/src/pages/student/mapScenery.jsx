@@ -26,6 +26,12 @@ const DRIFT = 28            // px a cloud drifts either way (styles.css map-drif
 const BAND = 1200           // px of map height per scenery tile
 const SKY = 460             // px of sky gradient at the top of the journey
 
+/* How wide a label may be on a phone: twice its stop's distance to the nearer edge of the box (the road's box
+   plus the 8px each side the map keeps), less a little. LearningMap.jsx sets it as max-width; the obstacles
+   below use it to know when a label wraps. BANNER_NUM is the chapter number badge and the gap after it. */
+export const labelRoom = (x, roadW) => Math.round(2 * Math.min(x + 8, roadW - x + 8) - 4)
+export const BANNER_NUM = 37
+
 /* A small, fast, seeded generator (mulberry32) and a seed from the book id, the row and what it is for. */
 function rng(book, row, what) {
   let h = 2166136261
@@ -43,21 +49,23 @@ const f = n => Math.round(n * 10) / 10
 const circle = (x, y, r) => `M${f(x - r)} ${f(y)}a${f(r)} ${f(r)} 0 1 0 ${f(2 * r)} 0a${f(r)} ${f(r)} 0 1 0 ${f(-2 * r)} 0`
 
 /* What must stay clear: boxes for stops, labels, banners and the "You" marker, and points along the road. */
-function obstacles(nodes, here) {
+function obstacles(nodes, here, narrow, roadW) {
   const boxes = [], road = []
   const box = (x0, y0, x1, y1) => boxes.push([x0 - CLEAR, y0 - CLEAR, x1 + CLEAR, y1 + CLEAR])
   nodes.forEach((n, i) => {
     if (n.kind === 'banner') {
-      const w = 37 + Math.max(n.ch.title.length * 7.4, 14 * 5.8) + 26
-      box(n.x - w / 2, n.y - 23, n.x + w / 2, n.y + 23)
+      let w = BANNER_NUM + Math.max(n.ch.title.length * 7.4, 14 * 5.8) + 26, h = 23
+      if (narrow && w > labelRoom(n.x, roadW)) { w = labelRoom(n.x, roadW); h = 31 }     // the title wraps
+      box(n.x - w / 2, n.y - h, n.x + w / 2, n.y + h)
     } else {
       const r = n.kind === 'test' ? 38 : 30
       const t = n.ch.test                            // the same words LearningMap.jsx prints under the stop
       const label = n.kind === 'sec' ? n.s.title
         : t.questions ? `Unit ${n.ch.number} test${t.taken ? ` · ${t.score}/${t.out_of}` : ''}` : 'Unit test — no questions yet'
-      const w = label.length * 6.6 + 18
+      let w = label.length * 6.6 + 18, lines = 1
+      if (narrow && w > labelRoom(n.x, roadW)) { w = labelRoom(n.x, roadW); lines = 2 }   // wraps, two lines at most
       box(n.x - r, n.y - r - (n.kind === 'test' ? 14 : 0), n.x + r, n.y + r)
-      box(n.x - w / 2, n.y + r + 1, n.x + w / 2, n.y + r + 25)
+      box(n.x - w / 2, n.y + r + 1, n.x + w / 2, n.y + r + 25 + (lines - 1) * 15)
     }
     if (n.kind === 'sec' && n.s.id === here) box(n.x + 20, n.y - 51, n.x + 72, n.y + 20)
     const m = nodes[i + 1]
@@ -73,10 +81,10 @@ function obstacles(nodes, here) {
   return { boxes, road }
 }
 
-export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
+export function scenery({ nodes, roadW, sceneW, height, bookId, here, narrow = false }) {
   if (!nodes.length) return null
   const ox = (sceneW - roadW) / 2
-  const { boxes, road } = obstacles(nodes, here)
+  const { boxes, road } = obstacles(nodes, here, narrow, roadW)
   const placed = []
   const free = (x, y, rx, ry = rx) => {
     if (x - rx < -ox || x + rx > roadW + ox || y - ry < 0 || y + ry > height) return false
@@ -87,6 +95,48 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
     return true
   }
   const keep = (x, y, r) => placed.push({ x, y, r })
+  const bands = Array.from({ length: Math.ceil(height / BAND) }, () => ({ leafA: [], leafB: [], pine: [], trunk: [], hills: [] }))
+  const bandOf = y => bands[Math.max(0, Math.min(bands.length - 1, Math.floor(y / BAND)))]
+
+  // Soft rolling hills: ground, behind everything, the road included. A hill is a smooth mound standing on a
+  // base line, filled down past the next band. On the horizon there are three depths: far hills, palest, widest
+  // and tallest; then middle; then near, lowest. Each has its own crest, so the skyline rises and falls. Every
+  // band below gets its own row of lower mounds over the last. Coordinates here are the scene's (0..sceneW).
+  const horizon = []                                  // the horizon's mounds, for groundY
+  const mound = (cx, w, h, base) => {
+    let d = `M${f(cx - w / 2)} ${f(base)}`
+    for (let k = 1; k <= 24; k++) d += `L${f(cx - w / 2 + w * k / 24)} ${f(base - h * (1 - Math.cos(2 * Math.PI * k / 24)) / 2)}`
+    return d + 'z'
+  }
+  const layer = (R, shade, base, spacing, w0, w1, h0, h1, depth, keepTop) => {
+    const n = Math.ceil(sceneW / spacing) + 1, out = [`M-40 ${f(base)}H${f(sceneW + 40)}V${f(base + depth)}H-40z`]
+    for (let k = 0; k <= n; k++) {
+      const cx = (k + (R() - 0.5) * 0.7) * (sceneW / n), w = w0 + R() * (w1 - w0), h = h0 + R() * (h1 - h0)
+      out.push(mound(cx, w, h, base))
+      if (keepTop) horizon.push({ cx, w, h, base })
+    }
+    const hills = bandOf(base).hills                  // painted in the order pushed: far, middle, near, then lower bands
+    if (hills.at(-1)?.[0] === shade) hills.at(-1)[1].push(...out)
+    else hills.push([shade, out])
+  }
+  const B0 = SKY - 60
+  const R1 = rng(bookId, 0, 'hills')
+  layer(R1, 3, B0, 380, 440, 780, 80, 170, HILL_BAND + 140, true)              // far: the palest, map-hill h3
+  layer(R1, 1, B0 + 34, 320, 340, 620, 45, 105, HILL_BAND + 100, true)         // middle: h1
+  layer(R1, 2, B0 + 72, 420, 300, 560, 22, 64, HILL_BAND + 60, true)           // near: the deepest, h2
+  for (let band = 1, base = B0 + 72 + HILL_BAND; base < height + 40; band++, base += HILL_BAND)
+    layer(rng(bookId, band, 'hills'), 1 + band % 3, base, 400, 380, 780, 28, 84, HILL_BAND + 140, false)
+  // the top of the ground at scene x: the highest of the horizon's base lines and mounds over it
+  const groundY = X => {
+    let y = B0
+    for (const m of horizon) {
+      const u = (X - (m.cx - m.w / 2)) / m.w
+      if (u > 0 && u < 1) y = Math.min(y, m.base - m.h * (1 - Math.cos(2 * Math.PI * u)) / 2)
+    }
+    return y
+  }
+  // something standing at road x, whose foot is at y, is on the ground
+  const onGround = (x, foot) => foot >= groundY(x + ox) + 4
 
   // a science prop beside each unit test, to mark it as a milestone
   const props = []
@@ -97,7 +147,7 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
     const side = R() < 0.5 ? -1 : 1
     for (const dx of [110, 150, 200, 250]) for (const sgn of [side, -side]) for (const dy of [0, -28, 28]) {
       const x = n.x + sgn * dx, y = n.y + dy
-      if (props.at(-1)?.row === n.row || !free(x, y, s / 2)) continue
+      if (props.at(-1)?.row === n.row || !onGround(x, y + s / 2) || !free(x, y, s / 2)) continue
       props.push({ kind, x: x + ox, y, s, row: n.row }); keep(x, y, s / 2)
     }
   })
@@ -110,7 +160,8 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
     const w = 84 + R0() * 60, h = w * 0.46
     for (let k = 0; k < 10; k++) {
       const x = -ox + (i + R0()) * (sceneW / nClouds), y = 14 + R0() * 150
-      if (!free(x, y, w / 2 + DRIFT, h / 2)) continue
+      const X = x + ox, low = y + h / 2 + 10
+      if ([X - w / 2 - DRIFT, X, X + w / 2 + DRIFT].some(gx => low > groundY(gx)) || !free(x, y, w / 2 + DRIFT, h / 2)) continue
       clouds.push({ x: f(x + ox - w / 2), y: f(y - h / 2), w: f(w), h: f(h), dur: Math.round(46 + R0() * 30), delay: Math.round(R0() * 40) })
       keep(x, y, w / 2 + DRIFT)
       break
@@ -118,8 +169,6 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
   }
 
   // trees, pines and bushes: a few a screen, more on a wide canvas, kept off the road
-  const bands = Array.from({ length: Math.ceil(height / BAND) }, () => ({ leafA: [], leafB: [], pine: [], trunk: [], hills: [[], [], []] }))
-  const bandOf = y => bands[Math.max(0, Math.min(bands.length - 1, Math.floor(y / BAND)))]
   const rows = Math.ceil((height - TOP) / ROW) + 1
   const perRow = 0.3 + 0.62 * sceneW / 1000          // about 0.7 a row on a phone's 620, 1.7 at 2560
   for (let row = 0; row < rows; row++) {
@@ -131,7 +180,7 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
       const r = (kind === 'bush' ? 15 : kind === 'pine' ? 18 : 20) * size
       for (let k = 0; k < 8; k++) {
         const x = -ox + R() * sceneW, y = TOP + row * ROW + (R() - 0.5) * ROW
-        if (!free(x, y, r)) continue
+        if (!onGround(x, y + r * 0.6) || !free(x, y, r)) continue
         const X = x + ox, { leafA, leafB, pine, trunk } = bandOf(y)
         if (kind === 'tree') {
           const c = 14 * size;
@@ -152,19 +201,8 @@ export function scenery({ nodes, roadW, sceneW, height, bookId, here }) {
     }
   }
 
-  // soft rolling hills: ground, behind everything, the road included. Each band is one ridge across the whole
-  // width, two slow waves added together, filled down past the next ridge, so the bands overlap like a
-  // landscape falling away. The first ridge starts below the sky.
-  for (let band = 0, y0 = SKY - 120; y0 < height + 40; band++, y0 += HILL_BAND) {
-    const R = rng(bookId, band, 'hills')
-    const a1 = 26 + R() * 22, l1 = 260 + R() * 220, p1 = R() * 6.3, a2 = 10 + R() * 12, l2 = 110 + R() * 90, p2 = R() * 6.3
-    let d = `M0 ${f(y0 + HILL_BAND + 90)}`
-    for (let x = 0; x <= sceneW + 40; x += 40) d += `L${f(x)} ${f(y0 + a1 * Math.sin(x / l1 + p1) + a2 * Math.sin(x / l2 + p2))}`
-    bandOf(y0).hills[band % 3].push(d + `L${f(sceneW + 40)} ${f(y0 + HILL_BAND + 90)}z`)
-  }
-
   return { ox, w: sceneW, props, clouds,
-           bands: bands.map(b => ({ hills: b.hills.map(h => h.join('')), leafA: b.leafA.join(''), leafB: b.leafB.join(''),
+           bands: bands.map(b => ({ hills: b.hills.map(([shade, d]) => [shade, d.join('')]), leafA: b.leafA.join(''), leafB: b.leafB.join(''),
                                      pine: b.pine.join(''), trunk: b.trunk.join('') })) }
 }
 
@@ -208,7 +246,7 @@ export function MapScene({ scene, height }) {
             </linearGradient></defs>
             <rect width={w} height={SKY} fill="url(#map-sky)" />
           </>}
-          {b.hills.map((d, k) => d && <path key={k} className={'map-hill h' + (k + 1)} d={d} />)}
+          {b.hills.map(([shade, d], k) => <path key={k} className={'map-hill h' + shade} d={d} />)}
         </Tile>
       ))}
       {bands.map((b, i) => (b.trunk || b.leafB) && (

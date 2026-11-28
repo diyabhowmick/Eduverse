@@ -474,6 +474,13 @@ ol.own-labels li.sub, ul.own-labels li.sub { margin-left: 1.8em; }
 .map-label{position:absolute;top:100%;margin-top:7px;font-size:11.5px;font-weight:700;color:var(--ink-2);
   white-space:nowrap;background:rgba(255,255,255,.9);padding:2px 8px;border-radius:7px}
 .map-label i{font-style:normal;color:var(--ink-3);font-weight:400}
+/* on a phone (LearningMap.jsx sets max-width): wrap to two lines, then "…", so a long title cannot reach the next stop */
+/* width:max-content: inside its 52px stop the label would otherwise shrink to its longest word. The vertical
+   padding becomes a transparent border, because the clamp clips at the padding edge and a third line showed in it. */
+.map-label.wrap{white-space:normal;text-align:center;line-height:1.3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
+  width:max-content;padding-top:0;padding-bottom:0;border-block:2px solid transparent}
+.map-banner .tt.wrap{white-space:normal}
+.map-banner .tt.wrap b{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 
 .map-banner{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:9px;z-index:2}
 .map-banner .num{width:28px;height:28px;border-radius:8px;background:var(--ink);color:#fff;display:grid;place-items:center;

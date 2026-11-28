@@ -20,7 +20,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).resolve().parent
-WIDTHS = (390, 1440, 2560)
+WIDTHS = (360, 390, 1440, 2560)
 LONG_ID = 9901          # an id the synthetic book is served under; the route is intercepted, so no such book exists
 
 TOPICS = ["Measurement", "Forces and Pressure", "Light", "Heat", "Electricity", "Magnetism", "Sound", "Matter",

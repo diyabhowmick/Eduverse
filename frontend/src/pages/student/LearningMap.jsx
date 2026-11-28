@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLoad, Page } from '../../ui'
-import { scenery, MapScene } from './mapScenery'
+import { scenery, MapScene, labelRoom, BANNER_NUM } from './mapScenery'
 
 /* The book as a road.
 
@@ -14,13 +14,16 @@ import { scenery, MapScene } from './mapScenery'
    than a single path, so how much of it is finished needs no path-length
    arithmetic: a segment is simply red when the stop it leads to is done. */
 
-// ROAD_W is the narrowest the road is laid out at; below it the road is scaled down to fit (a phone). With more
-// room it is laid out wider, up to ROAD_MAX, so the curves swing across a large screen instead of sitting in a
-// 620px strip. EDGE keeps the widest stop and its label clear of the sides.
-const ROW = 112, EDGE = 150, TOP = 76, PAD = 150, ROAD_W = 620, ROAD_MAX = 1040
+// The road is laid out at the width there is, from ROAD_MIN up to ROAD_MAX, so the curves swing across a large
+// screen instead of sitting in a strip. EDGE keeps the widest stop and its label clear of the sides. Below
+// ROAD_W (a phone) the swing narrows with the width, down to EDGE_MIN, so stops and text keep their full size
+// instead of the whole road being scaled down; ROAD_W and up is laid out exactly as it always was. Only below
+// ROAD_MIN, narrower than any phone, is the road scaled to fit.
+const ROW = 112, EDGE = 150, TOP = 76, PAD = 150, ROAD_W = 620, ROAD_MAX = 1040, ROAD_MIN = 280, EDGE_MIN = 80
 
 function layout(chapters, roadW = ROAD_W) {
-  const LEFT = EDGE, RIGHT = roadW - EDGE
+  const edge = roadW >= ROAD_W ? EDGE : Math.max(EDGE_MIN, roadW * EDGE / ROAD_W)
+  const LEFT = edge, RIGHT = roadW - edge
   const nodes = []
   let row = 0
   chapters.forEach(ch => {
@@ -48,8 +51,8 @@ export default function LearningMap() {
   const { data: home } = useLoad(id ? null : '/api/student/home', [id])
   const { data, error } = useLoad(id ? `/api/student/books/${id}/map` : null, [id])
   const scroller = useRef(null)
-  // The road is laid out at ROAD_W or wider and then scaled to whatever room
-  // there is, so it fits a phone without the stops falling off the right.
+  // The road is laid out at the width there is (see ROAD_MIN above); scale stays 1
+  // except on a box narrower than any phone.
   const [scale, setScale] = useState(1)
   const [roadW, setRoadW] = useState(ROAD_W)
   const [boxW, setBoxW] = useState(0)
@@ -57,7 +60,7 @@ export default function LearningMap() {
   // The landscape shares the road's coordinates and scale, but spans the whole box: at 2560 that is far wider
   // than the road. The height is the same sum as `height` below.
   const scene = useMemo(() => (data && boxW ? scenery({
-    nodes, roadW, sceneW: Math.max(roadW, Math.ceil(boxW / scale)), bookId: id, here: data.current?.section,
+    nodes, roadW, sceneW: Math.max(roadW, Math.ceil(boxW / scale)), bookId: id, here: data.current?.section, narrow: roadW < ROAD_W,
     height: (nodes.length ? nodes[nodes.length - 1].y : TOP) + PAD,
   }) : null), [data, nodes, roadW, boxW, scale, id])
 
@@ -66,8 +69,8 @@ export default function LearningMap() {
     if (!el) return
     const fit = () => {
       const room = el.clientWidth - 16
-      setScale(Math.min(1, room / ROAD_W))
-      setRoadW(Math.round(Math.max(ROAD_W, Math.min(ROAD_MAX, room))))
+      setScale(Math.min(1, room / ROAD_MIN))
+      setRoadW(Math.round(Math.max(ROAD_MIN, Math.min(ROAD_MAX, room))))
       setBoxW(el.clientWidth)
     }
     fit()
@@ -129,6 +132,10 @@ export default function LearningMap() {
   // student may have dipped into out of order.
   const firstTodo = nodes.findIndex(n => (n.kind === 'sec' && !n.s.done) || (n.kind === 'test' && !n.ch.test.taken))
   const travelled = firstTodo < 0 ? nodes.length : firstTodo
+  // On a phone a label may wrap to two lines (then "…"), no wider than its stop's distance to the nearer edge.
+  // Wide screens get no class and no style, so they render exactly as before.
+  const narrow = roadW < ROAD_W
+  const fits = (n, less = 0) => (narrow ? { className: ' wrap', style: { maxWidth: labelRoom(n.x, roadW) - less } } : { className: '' })
 
   return (
     <Page
@@ -161,7 +168,7 @@ export default function LearningMap() {
             if (n.kind === 'banner') return (
               <div key={i} className={'map-banner' + (n.ch.complete ? ' done' : '')} style={{ left: n.x, top: n.y }}>
                 <div className="num">{n.ch.number}</div>
-                <div className="tt"><b>{n.ch.title}</b><span>{n.ch.done} of {n.ch.total} done</span></div>
+                <div className={'tt' + fits(n).className} style={fits(n, BANNER_NUM).style}><b>{n.ch.title}</b><span>{n.ch.done} of {n.ch.total} done</span></div>
               </div>
             )
             if (n.kind === 'test') {
@@ -177,7 +184,7 @@ export default function LearningMap() {
                   onClick={() => nav(`/student/test/${id}/${n.ch.number}`)}>
                   {t.stars > 0 && <span className="map-stars">{stars(t.stars)}</span>}
                   <span className="disc">🏆</span>
-                  <span className="map-label">
+                  <span className={'map-label' + fits(n).className} style={fits(n).style}>
                     {t.questions ? `Unit ${n.ch.number} test` : 'Unit test — no questions yet'}
                     {t.taken && <i> · {t.score}/{t.out_of}</i>}
                   </span>
@@ -190,7 +197,7 @@ export default function LearningMap() {
                 title={`${n.s.number} ${n.s.title}`}
                 onClick={() => nav(`/student/read/${id}?ch=${n.ch.number}&sec=${encodeURIComponent(n.s.id)}`)}>
                 <span className="disc">{n.s.done ? '✓' : n.s.number}</span>
-                <span className="map-label">{n.s.title}</span>
+                <span className={'map-label' + fits(n).className} style={fits(n).style}>{n.s.title}</span>
               </button>
             )
           })}
