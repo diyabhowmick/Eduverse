@@ -24,6 +24,6 @@
 /* Page view with the explanation open on a laptop: the topic list folds away so the
    printed page keeps a readable size beside the panel */
 @media (min-width:1001px){
-  .sreader.has-side.pv-on{grid-template-columns:0 minmax(0,1fr) 400px}
+  .sreader.has-side.pv-on{grid-template-columns:0 minmax(0,1fr) var(--sw,400px)}
   .sreader.has-side.pv-on .srail{overflow:hidden;padding:0;border:0}
 }

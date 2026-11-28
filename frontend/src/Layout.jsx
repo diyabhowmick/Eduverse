@@ -31,7 +31,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
   return (
     <div className={'shell' + ((collapse ? !peek : collapsed) ? ' collapsed' : '')}>
       <aside className="rail">
-        <div className="rail-top"><img className="mark-img" src="/brand/zprox_mark.png" alt="" /><div className="brand">EduVerse<small>{role}</small></div></div>
+        <div className="rail-top"><img className="mark-img" src="/brand/eduverse_mark.png" alt="EduVerse" /><div className="brand">EduVerse<small>{role}</small></div></div>
         <nav className="nav" aria-label="Main">
           {nav.map(([p, i, l]) => p === '__group' ? <div key={'g' + i} className="grp">{i}</div> : (
             <NavLink key={p} to={to(p)} end={!p} title={l}>
@@ -50,7 +50,7 @@ export default function Layout({ nav, base, role, loginPath, counts = {}, badge,
       </aside>
       <main className="main">
         <header className="topbar">
-          <img className="topbar-mark" src="/brand/zprox_mark.png" alt="" />
+          <img className="topbar-mark" src="/brand/eduverse_mark.png" alt="EduVerse" />
           {badge}<span className="crumb">{role}</span><span className="crumb-sep">/</span><b>{current[2]}</b>
           <div className="who"><span>{user?.email}</span><div className="avatar" title={user?.email}>{(user?.name || 'U')[0]}</div>
             <button className="btn ghost" onClick={signOut} title="Sign out" aria-label="Sign out"><Icon n="out" s={16} /></button></div>

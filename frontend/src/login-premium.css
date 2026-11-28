@@ -99,11 +99,13 @@
 /* ---- sign-in launch ---- */
 .launch{position:fixed;inset:0;z-index:1100;pointer-events:none}
 .launch-bg{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse 60% 55% at 50% 50%,rgba(224,33,47,.28),transparent 70%),linear-gradient(180deg,#121318,#0A0B0E)}
-.launch-cube{position:fixed;will-change:transform,opacity;animation:launch-in .3s ease both}
+/* own layer, kept out of page layout and style recalcs while it zooms (scale is capped in Launch.jsx) */
+.launch-cube{position:fixed;will-change:transform,opacity;contain:layout style;backface-visibility:hidden;animation:launch-in .2s ease both}
+.launch .fold.lid-pop .h-top>.face{animation-duration:.45s}
 @keyframes launch-in{from{opacity:0}to{opacity:1}}
 .lux.is-launching .fold-slot{opacity:0;transition:opacity .25s}
 .lux.is-launching .login-form form,.lux.is-launching .login-art .story,.lux.is-launching .brandmark,.lux.is-launching .snd-toggle{
-  transition:opacity .5s ease .9s,transform .6s cubic-bezier(.5,0,.75,0) .9s;opacity:0;transform:scale(.97)}
+  transition:opacity .25s ease .15s,transform .3s cubic-bezier(.5,0,.75,0) .15s;opacity:0;transform:scale(.97)}
 
 /* ---- sound toggle ---- */
 .snd-toggle{position:fixed;left:calc(52.38vw + 20px);bottom:18px;z-index:40;display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px 0 9px;border-radius:999px;

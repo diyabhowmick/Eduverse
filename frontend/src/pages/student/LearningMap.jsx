@@ -13,9 +13,13 @@ import { useLoad, Page } from '../../ui'
    than a single path, so how much of it is finished needs no path-length
    arithmetic: a segment is simply red when the stop it leads to is done. */
 
-const ROW = 112, LEFT = 150, RIGHT = 470, TOP = 76, PAD = 150, ROAD_W = 620
+// ROAD_W is the narrowest the road is laid out at; below it the road is scaled down to fit (a phone). With more
+// room it is laid out wider, up to ROAD_MAX, so the curves swing across a large screen instead of sitting in a
+// 620px strip. EDGE keeps the widest stop and its label clear of the sides.
+const ROW = 112, EDGE = 150, TOP = 76, PAD = 150, ROAD_W = 620, ROAD_MAX = 1040
 
-function layout(chapters) {
+function layout(chapters, roadW = ROAD_W) {
+  const LEFT = EDGE, RIGHT = roadW - EDGE
   const nodes = []
   let row = 0
   chapters.forEach(ch => {
@@ -43,15 +47,20 @@ export default function LearningMap() {
   const { data: home } = useLoad(id ? null : '/api/student/home', [id])
   const { data, error } = useLoad(id ? `/api/student/books/${id}/map` : null, [id])
   const scroller = useRef(null)
-  const nodes = useMemo(() => (data ? layout(data.chapters) : []), [data])
-  // The road is laid out at a fixed width and then scaled to whatever room
+  // The road is laid out at ROAD_W or wider and then scaled to whatever room
   // there is, so it fits a phone without the stops falling off the right.
   const [scale, setScale] = useState(1)
+  const [roadW, setRoadW] = useState(ROAD_W)
+  const nodes = useMemo(() => (data ? layout(data.chapters, roadW) : []), [data, roadW])
 
   useEffect(() => {
     const el = scroller.current
     if (!el) return
-    const fit = () => setScale(Math.min(1, (el.clientWidth - 16) / ROAD_W))
+    const fit = () => {
+      const room = el.clientWidth - 16
+      setScale(Math.min(1, room / ROAD_W))
+      setRoadW(Math.round(Math.max(ROAD_W, Math.min(ROAD_MAX, room))))
+    }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el)
@@ -111,8 +120,8 @@ export default function LearningMap() {
 
       <div className="map-scroll" ref={scroller}>
         <div className="map-fit" style={{ height: height * scale }}>
-        <div className="map-road" style={{ height, transform: `scale(${scale})` }}>
-          <svg width={ROAD_W} height={height} aria-hidden="true">
+        <div className="map-road" style={{ height, width: roadW, marginLeft: -roadW / 2, transform: `scale(${scale})` }}>
+          <svg width={roadW} height={height} aria-hidden="true">
             {nodes.slice(0, -1).map((n, i) => {
               // Red is the road already travelled, so it stops at the first
               // stop not yet done. Without that the road runs red past a

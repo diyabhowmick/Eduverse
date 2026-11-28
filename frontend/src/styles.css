@@ -424,7 +424,7 @@ ol.own-labels li.sub, ul.own-labels li.sub { margin-left: 1.8em; }
   background:radial-gradient(760px 420px at 82% 4%,#F2F9F4 0,rgba(255,255,255,0) 60%),
              radial-gradient(640px 400px at 4% 92%,#EEF4FB 0,rgba(255,255,255,0) 58%),var(--bg)}
 .map-fit{position:relative;width:100%;overflow:hidden}
-/* a 620px road cannot centre with auto margins inside a narrower phone
+/* the road (620px or wider, see LearningMap.jsx) cannot centre with auto margins inside a narrower phone
    column, so it is pinned to the middle and scaled about that point. */
 .map-road{position:absolute;left:50%;width:620px;margin-left:-310px;transform-origin:top center}
 .map-road svg{position:absolute;left:0;top:0;pointer-events:none}

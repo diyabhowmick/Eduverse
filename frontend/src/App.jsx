@@ -6,7 +6,9 @@ const AddContent = lazy(() => import('./pages/AddContent'))
 const AiUsage = lazy(() => import('./pages/AiUsage'))
 import Layout from './Layout'
 import Login from './pages/Login'
-const Dashboard = lazy(() => import('./pages/Dashboard'))
+import { LaunchHost } from './Launch'
+import { HOME_CHUNKS } from './homeChunks'
+const Dashboard = lazy(HOME_CHUNKS['/sa'])
 const Admins = lazy(() => import('./pages/Admins'))
 const Schools = lazy(() => import('./pages/Schools'))
 const Pricing = lazy(() => import('./pages/Pricing'))
@@ -21,7 +23,7 @@ const Platform = lazy(() => import('./pages/Platform'))
 const Audit = lazy(() => import('./pages/Audit'))
 const Requests = lazy(() => import('./pages/Requests'))
 const Reviewers = lazy(() => import('./pages/Reviewers'))
-const AOverview = lazy(() => import('./pages/admin/Overview'))
+const AOverview = lazy(HOME_CHUNKS['/admin'])
 const AStudents = lazy(() => import('./pages/admin/Students'))
 const AClasses = lazy(() => import('./pages/admin/Classes'))
 const ABooks = lazy(() => import('./pages/admin/Books'))
@@ -29,11 +31,11 @@ const AAnalytics = lazy(() => import('./pages/admin/Analytics'))
 const ARules = lazy(() => import('./pages/admin/Rules'))
 const ARequests = lazy(() => import('./pages/admin/Requests'))
 const AProfile = lazy(() => import('./pages/admin/Profile'))
-const RQueue = lazy(() => import('./pages/reviewer/Queue'))
+const RQueue = lazy(HOME_CHUNKS['/review'])
 const RHistory = lazy(() => import('./pages/reviewer/History'))
 const RWorkspace = lazy(() => import('./pages/reviewer/Workspace'))
-const SHome = lazy(() => import('./pages/student/Home'))
-const TOverview = lazy(() => import('./pages/teacher/Overview'))
+const SHome = lazy(HOME_CHUNKS['/student'])
+const TOverview = lazy(HOME_CHUNKS['/teacher'])
 const TClasses = lazy(() => import('./pages/teacher/Classes'))
 const TClass = lazy(() => import('./pages/teacher/ClassDetail'))
 const TAnalytics = lazy(() => import('./pages/teacher/Analytics'))
@@ -163,6 +165,7 @@ export default function App() {
     <ToastHost>
       <SessionGate />
       <ConfirmHost />
+      <LaunchHost />
       <Suspense fallback={<div className="empty" style={{ padding: 40 }}>Loading</div>}>
       <Routes>
         <Route path="/login/superadmin" element={<Login portal="super_admin" />} />

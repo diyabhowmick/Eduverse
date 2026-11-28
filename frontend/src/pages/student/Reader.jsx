@@ -17,6 +17,15 @@ const LEADS = [['1.6', 'Close'], ['1.8', 'Normal'], ['2.05', 'Loose']]
 const THEMES = [['', 'Light'], ['warm', 'Warm paper'], ['night', 'Night']]
 const loadLook = () => { try { return { size: '17.5px', lead: '1.8', theme: '', ...JSON.parse(localStorage.getItem('ev_reader') || '{}') } } catch { return { size: '17.5px', lead: '1.8', theme: '' } } }
 
+// Desktop split between the book and the side panel (explain, notes, saved, mistakes): the share of their combined
+// width the panel takes. It opens wider than the book, since the explanation is what a tap asked for, and the
+// divider can move it. Remembered per device, next to the 'ev_reader' look settings.
+const SPLIT_KEY = 'ev_reader_split', SPLIT_DEFAULT = .56, MIN_BOOK = 400, MIN_SIDE = 340, RAIL_W = 270
+const loadSplit = () => { try { const v = parseFloat(localStorage.getItem(SPLIT_KEY)); return v > 0 && v < 1 ? v : SPLIT_DEFAULT } catch { return SPLIT_DEFAULT } }
+const saveSplit = v => { try { localStorage.setItem(SPLIT_KEY, String(Math.round(v * 1000) / 1000)) } catch { /* private mode */ } }
+// Panel width in px for a split, keeping both panes above their minimums (the panel wins on a small screen).
+const sidePx = (split, room) => room > 0 ? Math.round(Math.min(Math.max(MIN_SIDE, room - MIN_BOOK), Math.max(MIN_SIDE, split * room))) : 400
+
 function LookSheet({ look, set, onClose }) {
   const row = (label, opts, k) => <div><div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>{label}</div>
     <div className="seg">{opts.map(([v, l]) => <button key={v} type="button" className={look[k] === v ? 'on' : ''} onClick={() => set({ ...look, [k]: v })}>{l}</button>)}</div></div>
@@ -73,6 +82,12 @@ export default function Reader() {
   // Page view (the printed page) on a wide screen when this book has it; Reading view on a phone. The choice is remembered.
   const [viewPick, setViewPick] = useState(() => { try { return localStorage.getItem('ev_view') || '' } catch { return '' } })
   const pickView = v => { setViewPick(v); try { localStorage.setItem('ev_view', v) } catch { /* private mode */ } }
+  const [split, setSplit] = useState(loadSplit); const [dragging, setDragging] = useState(false)
+  const readerRef = useRef(); const [readerW, setReaderW] = useState(0)
+  useEffect(() => {
+    const el = readerRef.current; if (!el || narrow) return
+    const ro = new ResizeObserver(([e]) => setReaderW(e.contentRect.width)); ro.observe(el); return () => ro.disconnect()
+  }, [narrow, !!bk, chNo])   // the reader element exists once the book and its chapter are in
   const pageRef = useRef(); const lastPing = useRef(Date.now()); const curRef = useRef(null)
   useEffect(() => { api('/api/student/books/' + id).then(b => { setBk(b); const qc = sp.get('ch'); setChNo(qc != null && b.chapters.some(c => String(c.number) === qc) ? +qc : (b.progress.position?.chapter ?? (b.chapters.find(c => c.number > 0) || b.chapters[0])?.number)) }).catch(e => setErr(e.message)) }, [id])
   const ch = useMemo(() => bk?.chapters.find(c => c.number === chNo), [bk, chNo])
@@ -192,6 +207,27 @@ export default function Reader() {
   const secTitle = ch.sections.find(x => x.id === cur)?.title || ch.title
   const hasPages = !!bk.layout?.available
   const pageMode = hasPages && (viewPick ? viewPick === 'page' : !narrow)
+  // Page view folds the topic list away while the panel is open (pageview.css), so the book and panel share its room too.
+  const room = Math.max(0, readerW - (pageMode && panel ? 0 : RAIL_W))
+  const sideW = sidePx(split, room)
+  const bookPct = room ? Math.round(100 * (room - sideW) / room) : 50
+  const setSide = px => { const s = room ? sidePx(px / room, room) / room : split; setSplit(s); return s }
+  function dragStart(e) {
+    if (e.button !== 0 || !room) return
+    e.preventDefault()
+    const el = e.currentTarget, right = readerRef.current.getBoundingClientRect().right
+    el.setPointerCapture(e.pointerId); setDragging(true)
+    let last = split
+    const move = ev => { last = setSide(right - ev.clientX) }
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); setDragging(false); saveSplit(last) }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+  }
+  function dragKey(e) {
+    const step = e.shiftKey ? 80 : 24
+    const px = { ArrowLeft: sideW + step, ArrowRight: sideW - step, Home: room, End: 0 }[e.key]
+    if (px === undefined) return
+    e.preventDefault(); saveSplit(setSide(px))
+  }
   const side = <>
     <div className="sside-h"><div><div className="k">{panel === 'explain' && sel ? 'Explained for you' : 'Unit ' + ch.number}</div><h2>{panel === 'explain' && sel ? sel.term : secTitle}</h2></div>
       {!narrow && <button className="btn ghost sm" aria-label="Close" onClick={close}><Icon n="x" s={18} /></button>}</div>
@@ -219,7 +255,7 @@ export default function Reader() {
       {mine.mistakes.length > 0 && <Link className="btn sm" to="/student/revise?tab=mistakes">Open the Mistake book</Link>}</div>}
   </>
   return (
-    <div className={'sreader' + (panel && !narrow ? ' has-side' : '') + (pageMode ? ' pv-on' : '')}>
+    <div ref={readerRef} className={'sreader' + (panel && !narrow ? ' has-side' : '') + (pageMode ? ' pv-on' : '') + (dragging ? ' dragging' : '')} style={narrow ? undefined : { '--sw': sideW + 'px' }}>
       <nav className="srail">
         <Link to="/student" className="btn ghost sm">My books</Link>
         <div className="sbook">{bk.title}<div className="bar-track" style={{ marginTop: 6 }}><i style={{ width: bk.progress.percent + '%' }} /></div><span className="muted" style={{ fontSize: 12 }}>{bk.progress.percent}% of the book read</span></div>
@@ -252,9 +288,13 @@ export default function Reader() {
             {bk.chapters.find(c => c.number > ch.number) && <button className="btn primary lg inline" onClick={() => setChNo(bk.chapters.find(c => c.number > ch.number).number)}>Next unit<Icon n="right" s={18} /></button>}</div>
         </div>
       </article>
-      <aside className="sside" aria-hidden={!panel || narrow}>
+      <aside className="sside" id="reader-side" aria-hidden={!panel || narrow}>
         {panel && !narrow && <div className="sside-in" key={panel === 'explain' ? sel?.key : 'study'}>{side}</div>}
       </aside>
+      {panel && !narrow && <div className="sdivider" role="separator" tabIndex={0} aria-orientation="vertical" aria-controls="reader-side"
+        aria-label="Resize the book and the side panel" aria-valuemin={0} aria-valuemax={100} aria-valuenow={bookPct} aria-valuetext={`Book ${bookPct}%, panel ${100 - bookPct}%`}
+        title="Drag to resize, or use the arrow keys. Double-click to reset." onPointerDown={dragStart} onKeyDown={dragKey}
+        onDoubleClick={() => { setSplit(SPLIT_DEFAULT); saveSplit(SPLIT_DEFAULT) }}><i /></div>}
       {narrow && panel && <Sheet title={panel === 'explain' ? sel?.term : 'This unit'} onClose={close}>{side}</Sheet>}
       <ReaderEddie bk={bk} ch={ch} section={ch.sections.find(s => s.id === cur)} focus={figAsk} bookId={id}
         figures={() => figuresOf(ch).filter(f => f.section === (cur || ch.sections[0]?.id))}

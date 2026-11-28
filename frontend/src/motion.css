@@ -35,14 +35,32 @@
 .kw-pulse{animation:mv-pulse 1.8s var(--ease-out) 3;border-radius:4px}
 .chap-tip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px}
 
-/* ---- explain drawer (desktop): slides open when a word is tapped, the page keeps its width otherwise ---- */
+/* ---- explain drawer (desktop): slides open when a word is tapped, the page keeps its width otherwise ----
+   --sw is the panel width in px, set by Reader.jsx from the remembered split. The panel opens wider than the book
+   (the explanation is what the tap asked for) and the divider between them resizes both. */
 @media (min-width:1001px){
-  .sreader{grid-template-columns:270px minmax(0,1fr) 0;transition:grid-template-columns .42s var(--ease-out)}
-  .sreader.has-side{grid-template-columns:270px minmax(0,1fr) 400px}
+  .sreader{position:relative;grid-template-columns:270px minmax(0,1fr) 0;transition:grid-template-columns .42s var(--ease-out)}
+  .sreader.has-side{grid-template-columns:270px minmax(0,1fr) var(--sw,400px)}
   .sside{padding:0;border-left:1px solid transparent;overflow-x:hidden;transition:border-color .3s}
   .has-side .sside{border-left-color:var(--line)}
-  .sside-in{width:400px;padding:0 18px 24px;animation:mv-slide .38s var(--ease-out) both}
+  /* laid out at its final width from the start, so the text does not rewrap while the column slides open;
+     on a wide panel the cards stay a readable width, centred */
+  .sside-in{width:var(--sw,400px);padding:0 max(18px,calc((var(--sw,400px) - 760px) / 2)) 24px;animation:mv-slide .38s var(--ease-out) both}
+
+  .sdivider{position:absolute;top:0;bottom:0;right:var(--sw,400px);width:10px;margin-right:-5px;z-index:4;cursor:col-resize;touch-action:none;
+    outline:none;transition:right .42s var(--ease-out);animation:sd-in .42s var(--ease-out) both}
+  .sdivider i{position:absolute;left:4px;top:0;bottom:0;width:2px;border-radius:2px;background:transparent;transition:background .15s,box-shadow .15s}
+  .sdivider i:after{content:"";position:absolute;left:-3px;top:50%;width:8px;height:44px;margin-top:-22px;border-radius:999px;
+    background:var(--line-2);opacity:0;transition:opacity .15s,background .15s}
+  .sdivider:hover i,.sdivider:focus-visible i,.sreader.dragging .sdivider i{background:var(--red)}
+  .sdivider:hover i:after,.sdivider:focus-visible i:after,.sreader.dragging .sdivider i:after{opacity:1;background:var(--red)}
+  .sdivider:focus-visible i{box-shadow:0 0 0 3px var(--red-soft)}
+  .sreader.dragging,.sreader.dragging .sdivider{transition:none}
+  .sreader.dragging{cursor:col-resize;user-select:none}
+  .sreader.dragging .spage,.sreader.dragging .sside{pointer-events:none}
 }
+@keyframes sd-in{from{right:0}}
+@media (max-width:1000px){.sdivider{display:none}}
 .sside-h{position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;gap:8px;padding:16px 0 12px;margin-bottom:6px;
   background:color-mix(in srgb,var(--panel) 86%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .sside-h .k{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--red)}
@@ -138,8 +156,8 @@ a.hero:hover{transform:translateY(-2px);box-shadow:var(--lift)}
 .section-h h3{letter-spacing:-.015em}
 
 @media (prefers-reduced-motion:reduce){
-  .route-fx,.route-fx *,.sside-in,.xp-chip-w,.xp-body,.xp-hint,.xp-see,.xc-row,.xc-msg,.rv-detail,.kw-pulse{animation:none!important}
-  .sreader,.tile,.cont-card,.hero,.btn,.tile-cover .cover-card{transition:none!important}
+  .route-fx,.route-fx *,.sside-in,.sdivider,.xp-chip-w,.xp-body,.xp-hint,.xp-see,.xc-row,.xc-msg,.rv-detail,.kw-pulse{animation:none!important}
+  .sreader,.sdivider,.tile,.cont-card,.hero,.btn,.tile-cover .cover-card{transition:none!important}
   a.tile:hover,.cont-card:hover,a.hero:hover{transform:none}
 }
 

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import './eddie.css'
 import { eddie } from './eddieBus'
 import { play, buzz } from './sound'
+import { LAUNCH } from './Launch'
 import { speak, hush, mayTalkNow, canTalk, playClip } from './voice'
 
 // Eddie, the EduVerse helper bot. To use the final artwork, set EDDIE_IMG to its path
@@ -281,7 +282,7 @@ export default function Eddie({ portal, delay = 800, onTour, inline, entrance, p
     const c1x = sx - (sx - ex) * .25, c1y = sy + 120, c2x = ex + (sx > ex ? 60 : -60), c2y = ey - 160
     const X = actorEl.current, B = X.firstChild
     X.style.offsetPath = `path('M${sx},${sy} C${c1x},${c1y} ${c2x},${Math.max(H + 10, c2y)} ${ex},${Math.max(H + 10, ey - 70)} L${ex},${ey}')`
-    const total = 1250, dir = ex < sx ? -1 : 1
+    const total = LAUNCH.FLIGHT, dir = ex < sx ? -1 : 1
     X.animate([{ offsetDistance: '0%', easing: 'cubic-bezier(.5,0,.3,1)' }, { offset: .78, offsetDistance: '86%', easing: 'cubic-bezier(.5,0,.8,.5)' }, { offsetDistance: '100%' }], { duration: total, fill: 'forwards' })
     B.animate([
       { offset: 0, transform: 'scale(1) rotate(0deg)', opacity: 1 },

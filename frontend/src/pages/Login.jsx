@@ -11,7 +11,8 @@ const Intro = lazy(() => import('../Intro'))
 const HERO_DUR = 12
 import FoldLogo from '../FoldLogo'
 import Eddie from '../Eddie'
-import Launch from '../Launch'
+import { launcher, LAUNCH } from '../Launch'
+import { prefetchHome } from '../homeChunks'
 import SoundToggle from '../SoundToggle'
 import { eddie } from '../eddieBus'
 import { play, buzz } from '../sound'
@@ -57,7 +58,7 @@ export default function Login({ portal }) {
   const [played] = useState(intro)
   const [heroW, setHeroW] = useState(heroSize)
   useEffect(() => { const r = () => setHeroW(heroSize()); addEventListener('resize', r); return () => removeEventListener('resize', r) }, [])
-  const [launch, setLaunch] = useState(null)
+  const [launching, setLaunching] = useState(false)
   // Eddie follows what you type, hides his eyes for the password
   function caret(el) {
     const r = el.getBoundingClientRect(), cs = getComputedStyle(el)
@@ -66,38 +67,33 @@ export default function Login({ portal }) {
     eddie.emit('focus', { x: r.left + parseFloat(cs.paddingLeft) + Math.min(w, r.width - 24), y: r.top + r.height / 2 })
   }
   useEffect(() => { eddie.emit('pw', { focus: document.activeElement?.id === 'pw', show: showPw }) }, [showPw])
-  // Hand over to the app under a dark veil that lifts once the next page is up
-  function enter(home) {
-    const v = document.createElement('div'); v.className = 'launch-veil'; document.body.appendChild(v)
-    nav(home)
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      v.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 650, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' })
-      setTimeout(() => v.remove(), 700)
-    }))
-  }
-  function launchIn(home) {
-    if (scrollY > 8) { scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => launchIn(home), 480); return }
+  // Sign-in launch (Launch.jsx). The home screen's code starts downloading now; the cube animation runs in
+  // App's LaunchHost, so navigating halfway through the zoom (once its backdrop is opaque) does not cut it off,
+  // and the backdrop lifts when the home screen is up.
+  function launchIn(home, ready = prefetchHome(home)) {
+    if (scrollY > 8) { scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => launchIn(home, ready), 480); return }
     const slot = [...document.querySelectorAll('.fold-slot')].find(el => el.offsetParent !== null)
     if (!slot || matchMedia('(prefers-reduced-motion: reduce)').matches) { nav(home); return }
     const rect = slot.getBoundingClientRect()
-    setLaunch({ rect, phase: 'in', home })
-    setTimeout(() => document.querySelector('.launch .fold')?.classList.add('lid-pop'), 700)
-    setTimeout(() => play('pop', .7), 760)
+    setLaunching(true)
+    launcher.start({ rect, portal, ready, onCovered: () => nav(home) })
+    setTimeout(() => document.querySelector('.launch .fold')?.classList.add('lid-pop'), LAUNCH.LID)
+    setTimeout(() => play('pop', .7), LAUNCH.LID + 60)
     let fired = false
-    const zoom = () => { if (fired) return; fired = true; setLaunch(l => l && { ...l, phase: 'zoom' }) }
-    eddie.emit('launch', { done: zoom }); setTimeout(zoom, 1800)
+    const zoom = () => { if (fired) return; fired = true; launcher.zoom() }
+    eddie.emit('launch', { done: zoom }); setTimeout(zoom, LAUNCH.FLIGHT + 150)
   }
   async function submit(e) {
     e.preventDefault(); setErr(''); setBusy(true)
     try {
       const r = await api('/api/auth/login', { method: 'POST', body: { email, password, portal } }); auth.set(r.token, r.user); rememberLogin(portal, r.user)
       eddie.emit('mood', { type: 'happy' }); play('chime'); buzz(20)
-      setTimeout(() => launchIn(P.home), 450)
+      setTimeout(() => launchIn(P.home), LAUNCH.LEAD)
     }
     catch (x) { setErr(x.message); setBusy(false); eddie.emit('mood', { type: 'sad' }); play('error'); buzz([30, 40, 30]) }
   }
   return (
-    <div className={'login lux ' + (shown ? 'is-in' : 'is-pre') + (launch ? ' is-launching' : '')}>
+    <div className={'login lux ' + (shown ? 'is-in' : 'is-pre') + (launching ? ' is-launching' : '')}>
       <section className="login-art"><div className="stars" aria-hidden="true"><i /><i /><i /></div>
         <Brandmark />
         {!narrow && <div className="fold-slot" style={{ width: heroW, height: heroW / 1.574 }}><FoldLogo width={heroW} dur={HERO_DUR} offset={heroOff} tilt theme={portal} hold={!shown} onBurst={onBurst} className={shown ? heroCls : 'fold-wait'} /></div>}
@@ -125,7 +121,6 @@ export default function Login({ portal }) {
       </section>
       {tour && <Suspense fallback={null}><Tour onClose={() => setTour(false)} /></Suspense>}
       <SoundToggle />
-      {launch && <Launch rect={launch.rect} phase={launch.phase} portal={portal} onDone={() => enter(launch.home)} />}
       {intro && <Suspense fallback={null}><Intro theme={portal} onReveal={() => { setShown(true); markIntroSeen() }} onDone={() => { setIntro(false); markIntroSeen() }} /></Suspense>}
       {!intro && !played && !slowNet() && <button type="button" className="replay-intro" onClick={() => { location.search = '?intro' }}>Replay intro</button>}
     </div>

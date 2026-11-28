@@ -1,0 +1,22 @@
+/* Large monitors. Loaded after the other global sheets.
+
+   Wide layouts use the room; reading text does not. Card grids (.tiles, .classes-grid, .map-pick, .suggest,
+   .fc-grid, .mk-grid) are repeat(auto-fill, minmax(...)) and gain columns by themselves once .page stops capping
+   them. Left capped on purpose, because long lines are harder to read: .spage .inner (the book's text column),
+   .page-head p, .headline, and the question, test and form columns (.qwrap, .ct, .tr, .add-form, .stepper). */
+
+/* was max-width:1280px. A ceiling remains only for ultrawide monitors, where the page then centres. */
+.page{max-width:2400px}
+@media (min-width:2560px){.page{margin-inline:auto}}
+
+@media (min-width:1440px){
+  .page{padding-left:40px;padding-right:40px}
+  .choice-grid{max-width:1400px}
+}
+@media (min-width:1920px){
+  .page{padding-left:56px;padding-right:56px}
+  .tiles,.classes-grid,.map-pick{gap:20px}
+}
+@media (min-width:2560px){
+  .page{padding-left:72px;padding-right:72px}
+}
