@@ -415,6 +415,7 @@ class Drawing(Base):
     __tablename__ = "drawings"
     id: Mapped[int] = mapped_column(primary_key=True)
     explanation_id: Mapped[int | None] = mapped_column(ForeignKey("explanations.id"), nullable=True, index=True)
+    term: Mapped[str] = mapped_column(String(200), default="")           # what it draws, so a row not yet attached still says
     kind: Mapped[str] = mapped_column(String(20), default="geometry")     # geometry
     script: Mapped[str] = mapped_column(Text)                             # the JSON source
     svg: Mapped[str] = mapped_column(Text, default="")                    # the compiled output
@@ -484,7 +485,7 @@ class AiUsage(Base):
     __tablename__ = "ai_usage"
     id: Mapped[int] = mapped_column(primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
-    kind: Mapped[str] = mapped_column(String(30), index=True)            # explain | explain_deep | prepare | paper_read | paper_answers | recap
+    kind: Mapped[str] = mapped_column(String(30), index=True)            # explain | explain_deep | prepare | paper_read | paper_answers | recap | buddy | doubt | teach | chapter_test | drawing
     model: Mapped[str] = mapped_column(String(80), default="")
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)

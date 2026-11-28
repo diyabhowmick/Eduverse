@@ -1,0 +1,36 @@
+# Terms for eval_drawings.py, as a Tamil Nadu (Samacheer Kalvi) maths or science book would print them.
+# expect | subject | grade | term | the book's definition (optional)
+#   draw  a geometric drawing in the schema's reach would help
+#   skip  no such drawing: not a shape at all, or geometry the schema cannot express (a point on a segment,
+#         graphs). A script for these is "false enthusiasm", even if it passes the gate.
+# Interleaved, so a small --limit still sees both kinds.
+draw | Maths | 7 | right-angled triangle | A triangle in which one angle is a right angle.
+draw | Maths | 7 | isosceles triangle | A triangle with two equal sides.
+skip | Science | 7 | photosynthesis | The process by which green plants make food using sunlight.
+draw | Maths | 8 | area of a rectangle | The area of a rectangle is length × breadth.
+draw | Maths | 7 | circumference of a circle | The distance around a circle.
+skip | Social Science | 9 | democracy | Government by the people, through elected representatives.
+draw | Maths | 6 | acute angle | An angle that measures less than 90°.
+draw | Maths | 6 | obtuse angle | An angle that measures more than 90° and less than 180°.
+skip | Science | 6 | the water cycle | The continuous movement of water between the earth and the air.
+draw | Maths | 7 | equilateral triangle | A triangle with all three sides equal.
+draw | Maths | 8 | Pythagoras theorem | In a right-angled triangle, the square on the hypotenuse equals the sum of the squares on the other two sides.
+skip | Maths | 9 | median of a triangle | A line segment joining a vertex to the midpoint of the opposite side.
+draw | Maths | 6 | perimeter of a square | The total length of the four sides of a square.
+draw | Maths | 7 | radius | A line segment from the centre of a circle to any point on it.
+skip | English | 6 | nouns | Words that name a person, place, animal or thing.
+draw | Maths | 7 | diameter | A chord that passes through the centre of a circle.
+draw | Maths | 9 | chord | A line segment joining any two points on a circle.
+skip | Maths | 9 | altitude of a triangle | The perpendicular from a vertex to the opposite side.
+draw | Maths | 7 | complementary angles | Two angles whose sum is 90°.
+draw | Maths | 7 | supplementary angles | Two angles whose sum is 180°.
+skip | Science | 8 | food chain | The sequence in which food energy passes from one living thing to another.
+draw | Maths | 7 | vertically opposite angles | The opposite angles formed when two lines cross.
+draw | Maths | 8 | parallelogram | A quadrilateral whose opposite sides are parallel.
+skip | Science | 7 | evaporation | The change of a liquid into a gas at its surface.
+draw | Maths | 8 | rhombus | A quadrilateral with all four sides equal.
+draw | Maths | 7 | scalene triangle | A triangle with no two sides equal.
+skip | Maths | 9 | graph of a linear equation | The straight line on which every solution of the equation lies.
+draw | Maths | 7 | angle sum property of a triangle | The three angles of a triangle add up to 180°.
+draw | Maths | 6 | right angle | An angle of exactly 90°.
+skip | Social Science | 9 | the French Revolution | The revolution in France that began in 1789.
